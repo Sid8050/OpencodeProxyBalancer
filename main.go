@@ -13,21 +13,66 @@ import (
 	"time"
 )
 
-// Config structures
+// ── Pricing ─────────────────────────────────────────────────────
+
+type ModelPrice struct {
+	Input   float64 // per 1M tokens
+	Output  float64 // per 1M tokens
+	Cached  float64 // per 1M tokens
+}
+
+var modelPrices = map[string]ModelPrice{
+	"glm-5.1":            {Input: 1.40, Output: 4.40, Cached: 0.26},
+	"glm-5":              {Input: 1.00, Output: 3.20, Cached: 0.20},
+	"deepseek-v4-pro":    {Input: 1.74, Output: 3.48, Cached: 0.0145},
+	"deepseek-v4-flash":  {Input: 0.14, Output: 0.28, Cached: 0.0028},
+	"kimi-k2.6":          {Input: 0.95, Output: 4.00, Cached: 0.16},
+	"kimi-k2.5":          {Input: 0.60, Output: 3.00, Cached: 0.10},
+	"mimo-v2.5":          {Input: 0.14, Output: 0.28, Cached: 0.0028},
+	"mimo-v2.5-pro":      {Input: 1.74, Output: 3.48, Cached: 0.0145},
+	"minimax-m3":         {Input: 0.30, Output: 1.20, Cached: 0.06},
+	"minimax-m2.7":       {Input: 0.30, Output: 1.20, Cached: 0.06},
+	"minimax-m2.5":       {Input: 0.30, Output: 1.20, Cached: 0.06},
+	"qwen3.7-max":        {Input: 2.50, Output: 7.50, Cached: 0.50},
+	"qwen3.7-plus":       {Input: 0.40, Output: 1.60, Cached: 0.04},
+	"qwen3.6-plus":       {Input: 0.50, Output: 3.00, Cached: 0.05},
+}
+
+const (
+	Limit5H   = 12.0
+	LimitWeek = 30.0
+	LimitMonth = 60.0
+)
+
+// ── Config ──────────────────────────────────────────────────────
+
 type KeyEntry struct {
 	Name      string `json:"name"`
 	Key       string `json:"key"`
 	Exhausted bool   `json:"exhausted,omitempty"`
 	Disabled  bool   `json:"disabled,omitempty"`
-	Limit     int64  `json:"limit,omitempty"`
 	Note      string `json:"note,omitempty"`
 }
 
+type ModelSpend struct {
+	Tokens  int64   `json:"tokens"`
+	Dollars float64 `json:"dollars"`
+}
+
 type KeyUsage struct {
-	Requests    int64            `json:"requests"`
-	TotalTokens int64            `json:"total_tokens"`
-	LastUsed    time.Time        `json:"last_used,omitempty"`
-	Models      map[string]int64 `json:"models,omitempty"`
+	Requests    int64                  `json:"requests"`
+	TotalTokens int64                  `json:"total_tokens"`
+	Dollars     float64                `json:"dollars"`
+	LastUsed    time.Time              `json:"last_used,omitempty"`
+	Models      map[string]*ModelSpend `json:"models,omitempty"`
+	History     []SpendRecord          `json:"history,omitempty"`
+}
+
+type SpendRecord struct {
+	Time    time.Time `json:"time"`
+	Model   string    `json:"model"`
+	Tokens  int64     `json:"tokens"`
+	Dollars float64   `json:"dollars"`
 }
 
 type Config struct {
@@ -50,25 +95,19 @@ var (
 	saveCh  = make(chan struct{}, 1)
 )
 
+// ── Main ────────────────────────────────────────────────────────
+
 func main() {
 	loadConfig()
 
 	mux := http.NewServeMux()
-
-	// API endpoints
 	mux.HandleFunc("/api/keys", handleAPIKeys)
 	mux.HandleFunc("/api/keys/", handleAPIKeyDetail)
 	mux.HandleFunc("/api/stats", handleAPIStats)
 	mux.HandleFunc("/api/models", handleAPIModels)
-
-	// Legacy endpoints
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/usage", handleUsage)
-
-	// Dashboard
 	mux.HandleFunc("/dashboard", handleDashboard)
-
-	// Proxy
 	mux.HandleFunc("/", handleProxy)
 
 	go usageSaver()
@@ -82,15 +121,72 @@ func main() {
 	}
 }
 
-// Key rotation
+// ── Helpers ─────────────────────────────────────────────────────
+
+func calcCost(model string, prompt, completion, cached int64) float64 {
+	p, ok := modelPrices[model]
+	if !ok {
+		p = modelPrices["deepseek-v4-pro"]
+	}
+	inputCost := float64(prompt) * p.Input / 1e6
+	outputCost := float64(completion) * p.Output / 1e6
+	cachedCost := float64(cached) * p.Cached / 1e6
+	return inputCost + outputCost + cachedCost
+}
+
+func periodSpend(keyName string, since time.Time) float64 {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	u, ok := cfg.Usage[keyName]
+	if !ok {
+		return 0
+	}
+	var total float64
+	for _, r := range u.History {
+		if r.Time.After(since) {
+			total += r.Dollars
+		}
+	}
+	return total
+}
+
+func totalPeriodSpend(since time.Time) float64 {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	var total float64
+	for _, u := range cfg.Usage {
+		for _, r := range u.History {
+			if r.Time.After(since) {
+				total += r.Dollars
+			}
+		}
+	}
+	return total
+}
+
+func cleanOldHistory() {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	cutoff := time.Now().AddDate(0, 0, -35)
+	for _, u := range cfg.Usage {
+		var filtered []SpendRecord
+		for _, r := range u.History {
+			if r.Time.After(cutoff) {
+				filtered = append(filtered, r)
+			}
+		}
+		u.History = filtered
+	}
+}
+
+// ── Key rotation ──────────────────────────────────────────────
+
 func pickKey() string {
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
-
 	if len(cfg.Keys) == 0 {
 		return ""
 	}
-
 	idxMu.Lock()
 	start := keyIdx
 	for {
@@ -124,13 +220,24 @@ func markExhausted(name string) {
 	}
 }
 
-// API handlers
+func keyNameForKey(key string) string {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	for _, k := range cfg.Keys {
+		if k.Key == key {
+			return k.Name
+		}
+	}
+	return "unknown"
+}
+
+// ── API handlers ────────────────────────────────────────────────
+
 func handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -142,30 +249,29 @@ func handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		type KeyResponse struct {
 			KeyEntry
-			Requests    int64            `json:"requests"`
-			TotalTokens int64            `json:"total_tokens"`
-			LastUsed    time.Time        `json:"last_used,omitempty"`
-			Models      map[string]int64 `json:"models,omitempty"`
-			Remaining   int64            `json:"remaining,omitempty"`
-			Percent     float64          `json:"percent,omitempty"`
+			Requests     int64                  `json:"requests"`
+			TotalTokens  int64                  `json:"total_tokens"`
+			Dollars      float64                `json:"dollars"`
+			LastUsed     time.Time              `json:"last_used,omitempty"`
+			Models       map[string]*ModelSpend `json:"models,omitempty"`
+			Spend5H      float64                `json:"spend_5h"`
+			SpendWeek    float64                `json:"spend_week"`
+			SpendMonth   float64                `json:"spend_month"`
 		}
-
 		resp := make([]KeyResponse, 0, len(cfg.Keys))
 		for _, k := range cfg.Keys {
 			kr := KeyResponse{KeyEntry: k}
 			if u, ok := cfg.Usage[k.Name]; ok {
 				kr.Requests = u.Requests
 				kr.TotalTokens = u.TotalTokens
+				kr.Dollars = u.Dollars
 				kr.LastUsed = u.LastUsed
 				kr.Models = u.Models
 			}
-			if k.Limit > 0 {
-				kr.Remaining = k.Limit - kr.TotalTokens
-				if kr.Remaining < 0 {
-					kr.Remaining = 0
-				}
-				kr.Percent = float64(kr.TotalTokens) / float64(k.Limit) * 100
-			}
+			now := time.Now()
+			kr.Spend5H = periodSpend(k.Name, now.Add(-5*time.Hour))
+			kr.SpendWeek = periodSpend(k.Name, now.AddDate(0, 0, -7))
+			kr.SpendMonth = periodSpend(k.Name, now.AddDate(0, 0, -30))
 			resp = append(resp, kr)
 		}
 		json.NewEncoder(w).Encode(resp)
@@ -174,10 +280,9 @@ func handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "POST" {
 		var req struct {
-			Name  string `json:"name"`
-			Key   string `json:"key"`
-			Limit int64  `json:"limit,omitempty"`
-			Note  string `json:"note,omitempty"`
+			Name string `json:"name"`
+			Key  string `json:"key"`
+			Note string `json:"note,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -196,18 +301,12 @@ func handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		cfg.Keys = append(cfg.Keys, KeyEntry{
-			Name:  req.Name,
-			Key:   req.Key,
-			Limit: req.Limit,
-			Note:  req.Note,
-		})
-		cfg.Usage[req.Name] = &KeyUsage{Models: make(map[string]int64)}
+		cfg.Keys = append(cfg.Keys, KeyEntry{Name: req.Name, Key: req.Key, Note: req.Note})
+		cfg.Usage[req.Name] = &KeyUsage{Models: make(map[string]*ModelSpend)}
 		triggerSave()
 		json.NewEncoder(w).Encode(map[string]string{"status": "added"})
 		return
 	}
-
 	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
@@ -216,7 +315,6 @@ func handleAPIKeyDetail(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -255,10 +353,9 @@ func handleAPIKeyDetail(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "PUT" {
 		var req struct {
-			Disabled bool   `json:"disabled,omitempty"`
-			Exhausted bool  `json:"exhausted,omitempty"`
-			Limit    int64  `json:"limit,omitempty"`
-			Note     string `json:"note,omitempty"`
+			Disabled  bool   `json:"disabled,omitempty"`
+			Exhausted bool   `json:"exhausted,omitempty"`
+			Note      string `json:"note,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -267,99 +364,80 @@ func handleAPIKeyDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg.Keys[idx].Disabled = req.Disabled
 		cfg.Keys[idx].Exhausted = req.Exhausted
-		cfg.Keys[idx].Limit = req.Limit
 		cfg.Keys[idx].Note = req.Note
 		triggerSave()
 		json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 		return
 	}
-
 	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
 func handleAPIStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
 
-	totalKeys := len(cfg.Keys)
-	active := 0
-	disabled := 0
-	var totalTokens int64
+	now := time.Now()
+	spend5H := totalPeriodSpend(now.Add(-5 * time.Hour))
+	spendWeek := totalPeriodSpend(now.AddDate(0, 0, -7))
+	spendMonth := totalPeriodSpend(now.AddDate(0, 0, -30))
+
+	var totalDollars float64
 	var totalRequests int64
-	var totalLimit int64
-	var usedLimit int64
-
-	for _, k := range cfg.Keys {
-		if !k.Exhausted && !k.Disabled {
-			active++
-		}
-		if k.Disabled {
-			disabled++
-		}
-		if k.Limit > 0 {
-			totalLimit += k.Limit
-		}
-	}
+	var totalTokens int64
 	for _, u := range cfg.Usage {
-		totalTokens += u.TotalTokens
+		totalDollars += u.Dollars
 		totalRequests += u.Requests
-		usedLimit += u.TotalTokens
-	}
-
-	var percent float64
-	if totalLimit > 0 {
-		percent = float64(usedLimit) / float64(totalLimit) * 100
+		totalTokens += u.TotalTokens
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"total_keys":     totalKeys,
-		"active_keys":    active,
-		"disabled_keys":  disabled,
-		"exhausted_keys": totalKeys - active - disabled,
-		"total_tokens":   totalTokens,
+		"total_keys":    len(cfg.Keys),
+		"active_keys":   countActive(),
+		"exhausted_keys": countExhausted(),
+		"disabled_keys": countDisabled(),
 		"total_requests": totalRequests,
-		"total_limit":    totalLimit,
-		"used_limit":     usedLimit,
-		"percent":        percent,
+		"total_tokens":   totalTokens,
+		"total_dollars":  totalDollars,
+		"spend_5h":       spend5H,
+		"spend_week":     spendWeek,
+		"spend_month":    spendMonth,
+		"remaining_5h":   Limit5H - spend5H,
+		"remaining_week": LimitWeek - spendWeek,
+		"remaining_month": LimitMonth - spendMonth,
+		"percent_5h":     (spend5H / Limit5H) * 100,
+		"percent_week":   (spendWeek / LimitWeek) * 100,
+		"percent_month":  (spendMonth / LimitMonth) * 100,
 	})
 }
 
 func handleAPIModels(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
 
-	models := make(map[string]int64)
+	models := make(map[string]map[string]interface{})
 	for _, u := range cfg.Usage {
-		for m, c := range u.Models {
-			models[m] += c
+		for m, s := range u.Models {
+			if _, ok := models[m]; !ok {
+				models[m] = map[string]interface{}{"tokens": int64(0), "dollars": 0.0}
+			}
+			models[m]["tokens"] = models[m]["tokens"].(int64) + s.Tokens
+			models[m]["dollars"] = models[m]["dollars"].(float64) + s.Dollars
 		}
 	}
 	json.NewEncoder(w).Encode(models)
 }
 
-// Legacy handlers
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	cfgMu.RLock()
-	totalKeys := len(cfg.Keys)
-	active := 0
-	for _, k := range cfg.Keys {
-		if !k.Exhausted && !k.Disabled {
-			active++
-		}
-	}
-	cfgMu.RUnlock()
-
-	w.Header().Set("Content-Type", "application/json")
+	defer cfgMu.RUnlock()
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":      "healthy",
-		"total_keys":  totalKeys,
-		"active_keys": active,
+		"total_keys":  len(cfg.Keys),
+		"active_keys": countActive(),
 		"uptime":      time.Now().Format(time.RFC3339),
 	})
 }
@@ -367,30 +445,52 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 func handleUsage(w http.ResponseWriter, r *http.Request) {
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
-
-	type KeyStats struct {
-		Name        string    `json:"name"`
-		Exhausted   bool      `json:"exhausted"`
-		Disabled    bool      `json:"disabled"`
-		Requests    int64     `json:"requests"`
-		TotalTokens int64     `json:"total_tokens"`
-		LastUsed    time.Time `json:"last_used,omitempty"`
-	}
-
-	stats := make([]KeyStats, 0, len(cfg.Keys))
+	stats := make([]map[string]interface{}, 0, len(cfg.Keys))
 	for _, k := range cfg.Keys {
-		s := KeyStats{Name: k.Name, Exhausted: k.Exhausted, Disabled: k.Disabled}
+		s := map[string]interface{}{"name": k.Name, "exhausted": k.Exhausted, "disabled": k.Disabled}
 		if u, ok := cfg.Usage[k.Name]; ok {
-			s.Requests = u.Requests
-			s.TotalTokens = u.TotalTokens
-			s.LastUsed = u.LastUsed
+			s["requests"] = u.Requests
+			s["total_tokens"] = u.TotalTokens
+			s["dollars"] = u.Dollars
+			s["last_used"] = u.LastUsed
 		}
 		stats = append(stats, s)
 	}
 	json.NewEncoder(w).Encode(stats)
 }
 
-// Proxy
+func countActive() int {
+	c := 0
+	for _, k := range cfg.Keys {
+		if !k.Exhausted && !k.Disabled {
+			c++
+		}
+	}
+	return c
+}
+
+func countExhausted() int {
+	c := 0
+	for _, k := range cfg.Keys {
+		if k.Exhausted && !k.Disabled {
+			c++
+		}
+	}
+	return c
+}
+
+func countDisabled() int {
+	c := 0
+	for _, k := range cfg.Keys {
+		if k.Disabled {
+			c++
+		}
+	}
+	return c
+}
+
+// ── Proxy ───────────────────────────────────────────────────────
+
 var proxyClient = &http.Client{
 	Timeout: 5 * time.Minute,
 	Transport: &http.Transport{
@@ -435,7 +535,6 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"no API keys configured"}`, http.StatusServiceUnavailable)
 			return
 		}
-
 		keyName := keyNameForKey(key)
 
 		req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(bodyBytes))
@@ -443,7 +542,6 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"failed to create request"}`, http.StatusInternalServerError)
 			return
 		}
-
 		req.Header.Set("Authorization", "Bearer "+key)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "OpenCodeProxy/1.0")
@@ -477,28 +575,48 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 		var payload struct {
 			Usage struct {
-				TotalTokens int64 `json:"total_tokens"`
+				PromptTokens        int64 `json:"prompt_tokens"`
+				CompletionTokens    int64 `json:"completion_tokens"`
+				TotalTokens         int64 `json:"total_tokens"`
+				PromptTokensDetails struct {
+					CachedTokens int64 `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
 			} `json:"usage"`
 		}
 		if json.Unmarshal(respBody, &payload) == nil && payload.Usage.TotalTokens > 0 {
+			cost := calcCost(modelName, payload.Usage.PromptTokens, payload.Usage.CompletionTokens,
+				payload.Usage.PromptTokensDetails.CachedTokens)
+
 			cfgMu.Lock()
 			if cfg.Usage == nil {
 				cfg.Usage = make(map[string]*KeyUsage)
 			}
 			u, ok := cfg.Usage[keyName]
 			if !ok {
-				u = &KeyUsage{Models: make(map[string]int64)}
+				u = &KeyUsage{Models: make(map[string]*ModelSpend)}
 				cfg.Usage[keyName] = u
 			}
 			u.Requests++
 			u.TotalTokens += payload.Usage.TotalTokens
+			u.Dollars += cost
 			u.LastUsed = time.Now()
 			if u.Models == nil {
-				u.Models = make(map[string]int64)
+				u.Models = make(map[string]*ModelSpend)
 			}
-			u.Models[modelName] += payload.Usage.TotalTokens
+			if u.Models[modelName] == nil {
+				u.Models[modelName] = &ModelSpend{}
+			}
+			u.Models[modelName].Tokens += payload.Usage.TotalTokens
+			u.Models[modelName].Dollars += cost
+			u.History = append(u.History, SpendRecord{
+				Time:    time.Now(),
+				Model:   modelName,
+				Tokens:  payload.Usage.TotalTokens,
+				Dollars: cost,
+			})
 			cfgMu.Unlock()
 			triggerSave()
+			cleanOldHistory()
 		}
 
 		for k, vs := range resp.Header {
@@ -515,18 +633,8 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, `{"error":"all API keys exhausted"}`, http.StatusServiceUnavailable)
 }
 
-func keyNameForKey(key string) string {
-	cfgMu.RLock()
-	defer cfgMu.RUnlock()
-	for _, k := range cfg.Keys {
-		if k.Key == key {
-			return k.Name
-		}
-	}
-	return "unknown"
-}
+// ── Dashboard ───────────────────────────────────────────────────
 
-// Dashboard
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data, err := os.ReadFile("dashboard.html")
@@ -538,7 +646,8 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-// Persistence
+// ── Persistence ───────────────────────────────────────────────
+
 func triggerSave() {
 	select {
 	case saveCh <- struct{}{}:
@@ -578,7 +687,7 @@ func loadConfig() {
 	}
 	for _, k := range cfg.Keys {
 		if _, ok := cfg.Usage[k.Name]; !ok {
-			cfg.Usage[k.Name] = &KeyUsage{Models: make(map[string]int64)}
+			cfg.Usage[k.Name] = &KeyUsage{Models: make(map[string]*ModelSpend)}
 		}
 	}
 }
@@ -598,7 +707,3 @@ func saveConfig() {
 		log.Printf("Error saving config: %v", err)
 	}
 }
-
-// Dashboard HTML
-
-
