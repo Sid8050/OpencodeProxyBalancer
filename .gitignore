@@ -1,5 +1,5 @@
 /proxy
-**/proxy
+/bin/
 *.log
 .DS_Store
 keys.json
