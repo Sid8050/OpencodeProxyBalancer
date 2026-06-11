@@ -13,18 +13,21 @@ import (
 	"time"
 )
 
-// ── Config / State ──────────────────────────────────────────────
-
+// Config structures
 type KeyEntry struct {
 	Name      string `json:"name"`
 	Key       string `json:"key"`
 	Exhausted bool   `json:"exhausted,omitempty"`
+	Disabled  bool   `json:"disabled,omitempty"`
+	Limit     int64  `json:"limit,omitempty"`
+	Note      string `json:"note,omitempty"`
 }
 
 type KeyUsage struct {
-	Requests    int64     `json:"requests"`
-	TotalTokens int64     `json:"total_tokens"`
-	LastUsed    time.Time `json:"last_used,omitempty"`
+	Requests    int64            `json:"requests"`
+	TotalTokens int64            `json:"total_tokens"`
+	LastUsed    time.Time        `json:"last_used,omitempty"`
+	Models      map[string]int64 `json:"models,omitempty"`
 }
 
 type Config struct {
@@ -47,18 +50,27 @@ var (
 	saveCh  = make(chan struct{}, 1)
 )
 
-// ── Main ────────────────────────────────────────────────────────
-
 func main() {
 	loadConfig()
 
 	mux := http.NewServeMux()
+
+	// API endpoints
+	mux.HandleFunc("/api/keys", handleAPIKeys)
+	mux.HandleFunc("/api/keys/", handleAPIKeyDetail)
+	mux.HandleFunc("/api/stats", handleAPIStats)
+	mux.HandleFunc("/api/models", handleAPIModels)
+
+	// Legacy endpoints
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/usage", handleUsage)
+
+	// Dashboard
 	mux.HandleFunc("/dashboard", handleDashboard)
+
+	// Proxy
 	mux.HandleFunc("/", handleProxy)
 
-	// Background usage saver
 	go usageSaver()
 
 	log.Printf("🔑 Load balancer running on http://localhost%s", listenAddr)
@@ -70,8 +82,7 @@ func main() {
 	}
 }
 
-// ── Key rotation ────────────────────────────────────────────────
-
+// Key rotation
 func pickKey() string {
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
@@ -85,16 +96,15 @@ func pickKey() string {
 	for {
 		k := &cfg.Keys[keyIdx]
 		keyIdx = (keyIdx + 1) % len(cfg.Keys)
-		if !k.Exhausted {
+		if !k.Exhausted && !k.Disabled {
 			idxMu.Unlock()
 			return k.Key
 		}
 		if keyIdx == start {
-			// All exhausted — reset and use first
 			for i := range cfg.Keys {
 				cfg.Keys[i].Exhausted = false
 			}
-			log.Println("⚠️  All keys exhausted — resetting all")
+			log.Println("⚠️ All keys exhausted — resetting all")
 			idxMu.Unlock()
 			return cfg.Keys[0].Key
 		}
@@ -114,19 +124,285 @@ func markExhausted(name string) {
 	}
 }
 
-// ── Proxy handler (manual forwarding with key rotation) ─────────
+// API handlers
+func handleAPIKeys(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+
+	if r.Method == "GET" {
+		type KeyResponse struct {
+			KeyEntry
+			Requests    int64            `json:"requests"`
+			TotalTokens int64            `json:"total_tokens"`
+			LastUsed    time.Time        `json:"last_used,omitempty"`
+			Models      map[string]int64 `json:"models,omitempty"`
+			Remaining   int64            `json:"remaining,omitempty"`
+			Percent     float64          `json:"percent,omitempty"`
+		}
+
+		resp := make([]KeyResponse, 0, len(cfg.Keys))
+		for _, k := range cfg.Keys {
+			kr := KeyResponse{KeyEntry: k}
+			if u, ok := cfg.Usage[k.Name]; ok {
+				kr.Requests = u.Requests
+				kr.TotalTokens = u.TotalTokens
+				kr.LastUsed = u.LastUsed
+				kr.Models = u.Models
+			}
+			if k.Limit > 0 {
+				kr.Remaining = k.Limit - kr.TotalTokens
+				if kr.Remaining < 0 {
+					kr.Remaining = 0
+				}
+				kr.Percent = float64(kr.TotalTokens) / float64(k.Limit) * 100
+			}
+			resp = append(resp, kr)
+		}
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	if r.Method == "POST" {
+		var req struct {
+			Name  string `json:"name"`
+			Key   string `json:"key"`
+			Limit int64  `json:"limit,omitempty"`
+			Note  string `json:"note,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON"})
+			return
+		}
+		if req.Name == "" || req.Key == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "name and key required"})
+			return
+		}
+		for _, k := range cfg.Keys {
+			if k.Name == req.Name {
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(map[string]string{"error": "key name already exists"})
+				return
+			}
+		}
+		cfg.Keys = append(cfg.Keys, KeyEntry{
+			Name:  req.Name,
+			Key:   req.Key,
+			Limit: req.Limit,
+			Note:  req.Note,
+		})
+		cfg.Usage[req.Name] = &KeyUsage{Models: make(map[string]int64)}
+		triggerSave()
+		json.NewEncoder(w).Encode(map[string]string{"status": "added"})
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
+}
+
+func handleAPIKeyDetail(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	name := parts[3]
+
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+
+	idx := -1
+	for i, k := range cfg.Keys {
+		if k.Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "key not found"})
+		return
+	}
+
+	if r.Method == "DELETE" {
+		cfg.Keys = append(cfg.Keys[:idx], cfg.Keys[idx+1:]...)
+		delete(cfg.Usage, name)
+		triggerSave()
+		json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+		return
+	}
+
+	if r.Method == "PUT" {
+		var req struct {
+			Disabled bool   `json:"disabled,omitempty"`
+			Exhausted bool  `json:"exhausted,omitempty"`
+			Limit    int64  `json:"limit,omitempty"`
+			Note     string `json:"note,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON"})
+			return
+		}
+		cfg.Keys[idx].Disabled = req.Disabled
+		cfg.Keys[idx].Exhausted = req.Exhausted
+		cfg.Keys[idx].Limit = req.Limit
+		cfg.Keys[idx].Note = req.Note
+		triggerSave()
+		json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
+}
+
+func handleAPIStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+
+	totalKeys := len(cfg.Keys)
+	active := 0
+	disabled := 0
+	var totalTokens int64
+	var totalRequests int64
+	var totalLimit int64
+	var usedLimit int64
+
+	for _, k := range cfg.Keys {
+		if !k.Exhausted && !k.Disabled {
+			active++
+		}
+		if k.Disabled {
+			disabled++
+		}
+		if k.Limit > 0 {
+			totalLimit += k.Limit
+		}
+	}
+	for _, u := range cfg.Usage {
+		totalTokens += u.TotalTokens
+		totalRequests += u.Requests
+		usedLimit += u.TotalTokens
+	}
+
+	var percent float64
+	if totalLimit > 0 {
+		percent = float64(usedLimit) / float64(totalLimit) * 100
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"total_keys":     totalKeys,
+		"active_keys":    active,
+		"disabled_keys":  disabled,
+		"exhausted_keys": totalKeys - active - disabled,
+		"total_tokens":   totalTokens,
+		"total_requests": totalRequests,
+		"total_limit":    totalLimit,
+		"used_limit":     usedLimit,
+		"percent":        percent,
+	})
+}
+
+func handleAPIModels(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+
+	models := make(map[string]int64)
+	for _, u := range cfg.Usage {
+		for m, c := range u.Models {
+			models[m] += c
+		}
+	}
+	json.NewEncoder(w).Encode(models)
+}
+
+// Legacy handlers
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	cfgMu.RLock()
+	totalKeys := len(cfg.Keys)
+	active := 0
+	for _, k := range cfg.Keys {
+		if !k.Exhausted && !k.Disabled {
+			active++
+		}
+	}
+	cfgMu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":      "healthy",
+		"total_keys":  totalKeys,
+		"active_keys": active,
+		"uptime":      time.Now().Format(time.RFC3339),
+	})
+}
+
+func handleUsage(w http.ResponseWriter, r *http.Request) {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+
+	type KeyStats struct {
+		Name        string    `json:"name"`
+		Exhausted   bool      `json:"exhausted"`
+		Disabled    bool      `json:"disabled"`
+		Requests    int64     `json:"requests"`
+		TotalTokens int64     `json:"total_tokens"`
+		LastUsed    time.Time `json:"last_used,omitempty"`
+	}
+
+	stats := make([]KeyStats, 0, len(cfg.Keys))
+	for _, k := range cfg.Keys {
+		s := KeyStats{Name: k.Name, Exhausted: k.Exhausted, Disabled: k.Disabled}
+		if u, ok := cfg.Usage[k.Name]; ok {
+			s.Requests = u.Requests
+			s.TotalTokens = u.TotalTokens
+			s.LastUsed = u.LastUsed
+		}
+		stats = append(stats, s)
+	}
+	json.NewEncoder(w).Encode(stats)
+}
+
+// Proxy
 var proxyClient = &http.Client{
 	Timeout: 5 * time.Minute,
 	Transport: &http.Transport{
-		MaxIdleConns:        20,
-		IdleConnTimeout:      90 * time.Second,
-		DisableCompression:   false,
+		MaxIdleConns:     20,
+		IdleConnTimeout:  90 * time.Second,
+		DisableCompression: false,
 	},
 }
 
 func handleProxy(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/health" || r.URL.Path == "/usage" || r.URL.Path == "/dashboard" {
+	if r.URL.Path == "/health" || r.URL.Path == "/usage" || r.URL.Path == "/dashboard" ||
+		strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/static/") {
 		return
 	}
 
@@ -136,6 +412,14 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body.Close()
+
+	var reqBody map[string]interface{}
+	modelName := "unknown"
+	if json.Unmarshal(bodyBytes, &reqBody) == nil {
+		if m, ok := reqBody["model"].(string); ok {
+			modelName = m
+		}
+	}
 
 	targetURL := upstreamURL + r.URL.Path
 	if r.URL.RawQuery != "" {
@@ -168,7 +452,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		resp, err := proxyClient.Do(req)
 		if err != nil {
 			lastErr = err
-			log.Printf("⚠️  Request failed with key '%s': %v", keyName, err)
+			log.Printf("⚠️ Request failed with key '%s': %v", keyName, err)
 			continue
 		}
 
@@ -183,7 +467,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if strings.Contains(string(body), "cloudflare") {
-				log.Printf("⚠️  Cloudflare blocked key '%s', retrying...", keyName)
+				log.Printf("⚠️ Cloudflare blocked key '%s', retrying...", keyName)
 				continue
 			}
 		}
@@ -203,12 +487,16 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 			u, ok := cfg.Usage[keyName]
 			if !ok {
-				u = &KeyUsage{}
+				u = &KeyUsage{Models: make(map[string]int64)}
 				cfg.Usage[keyName] = u
 			}
 			u.Requests++
 			u.TotalTokens += payload.Usage.TotalTokens
 			u.LastUsed = time.Now()
+			if u.Models == nil {
+				u.Models = make(map[string]int64)
+			}
+			u.Models[modelName] += payload.Usage.TotalTokens
 			cfgMu.Unlock()
 			triggerSave()
 		}
@@ -238,62 +526,19 @@ func keyNameForKey(key string) string {
 	return "unknown"
 }
 
-// ── Handlers ────────────────────────────────────────────────────
-
-func handleHealth(w http.ResponseWriter, r *http.Request) {
-	cfgMu.RLock()
-	totalKeys := len(cfg.Keys)
-	active := 0
-	for _, k := range cfg.Keys {
-		if !k.Exhausted {
-			active++
-		}
-	}
-	cfgMu.RUnlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":      "healthy",
-		"total_keys":  totalKeys,
-		"active_keys": active,
-		"uptime":      time.Now().Format(time.RFC3339),
-	})
-}
-
-func handleUsage(w http.ResponseWriter, r *http.Request) {
-	cfgMu.RLock()
-	defer cfgMu.RUnlock()
-
-	type KeyStats struct {
-		Name        string    `json:"name"`
-		Exhausted   bool      `json:"exhausted"`
-		Requests    int64     `json:"requests"`
-		TotalTokens int64     `json:"total_tokens"`
-		LastUsed    time.Time `json:"last_used,omitempty"`
-	}
-
-	stats := make([]KeyStats, 0, len(cfg.Keys))
-	for _, k := range cfg.Keys {
-		s := KeyStats{Name: k.Name, Exhausted: k.Exhausted}
-		if u, ok := cfg.Usage[k.Name]; ok {
-			s.Requests = u.Requests
-			s.TotalTokens = u.TotalTokens
-			s.LastUsed = u.LastUsed
-		}
-		stats = append(stats, s)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
-}
-
+// Dashboard
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(dashboardHTML))
+	data, err := os.ReadFile("dashboard.html")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Dashboard not found. Make sure dashboard.html is in the same directory."))
+		return
+	}
+	w.Write(data)
 }
 
-// ── Persistence ─────────────────────────────────────────────────
-
+// Persistence
 func triggerSave() {
 	select {
 	case saveCh <- struct{}{}:
@@ -303,10 +548,8 @@ func triggerSave() {
 
 func usageSaver() {
 	for range saveCh {
-		time.Sleep(saveDebounce * time.Duration(len(saveCh)+1)) // batch
-
-		// Drain channel
-		drain:
+		time.Sleep(saveDebounce * time.Duration(len(saveCh)+1))
+	drain:
 		for {
 			select {
 			case <-saveCh:
@@ -314,7 +557,6 @@ func usageSaver() {
 				break drain
 			}
 		}
-
 		saveConfig()
 	}
 }
@@ -325,24 +567,18 @@ func loadConfig() {
 		log.Printf("No %s found — create one with your API keys", configPath)
 		return
 	}
-
 	cfgMu.Lock()
 	defer cfgMu.Unlock()
-
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		log.Printf("Error parsing %s: %v", configPath, err)
 		return
 	}
-
-	// Ensure usage map initialized
 	if cfg.Usage == nil {
 		cfg.Usage = make(map[string]*KeyUsage)
 	}
-
-	// Fill missing usage entries
 	for _, k := range cfg.Keys {
 		if _, ok := cfg.Usage[k.Name]; !ok {
-			cfg.Usage[k.Name] = &KeyUsage{}
+			cfg.Usage[k.Name] = &KeyUsage{Models: make(map[string]int64)}
 		}
 	}
 }
@@ -350,133 +586,19 @@ func loadConfig() {
 func saveConfig() {
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
-
-	// Sort keys for consistent output
 	sort.Slice(cfg.Keys, func(i, j int) bool {
 		return cfg.Keys[i].Name < cfg.Keys[j].Name
 	})
-
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		log.Printf("Error marshaling config: %v", err)
 		return
 	}
-
 	if err := os.WriteFile(configPath, data, 0600); err != nil {
 		log.Printf("Error saving config: %v", err)
 	}
 }
 
-// ── Dashboard HTML ──────────────────────────────────────────────
+// Dashboard HTML
 
-const dashboardHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Key Usage Dashboard</title>
-<style>
-  :root { --bg:#0a0a0f; --card:rgba(255,255,255,0.04); --text:#e4e4e7; --muted:#71717a; --green:#22c55e; --red:#ef4444; --amber:#f59e0b; --accent:#22d3ee; }
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:40px 20px}
-  .container{max-width:700px;margin:0 auto}
-  h1{font-size:1.8rem;margin-bottom:8px;letter-spacing:-0.02em}
-  .subtitle{color:var(--muted);font-size:14px;margin-bottom:32px}
-  .summary{display:flex;gap:16px;margin-bottom:32px}
-  .summary-card{flex:1;background:var(--card);border-radius:12px;padding:20px;text-align:center;border:1px solid rgba(255,255,255,0.06)}
-  .summary-card .value{font-size:2rem;font-weight:700}
-  .summary-card .label{font-size:12px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:0.05em}
-  .key-card{background:var(--card);border-radius:12px;padding:20px;margin-bottom:12px;border:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:16px;transition:all 0.2s}
-  .key-card.exhausted{opacity:0.45;border-color:rgba(239,68,68,0.2)}
-  .status-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
-  .status-dot.active{background:var(--green);box-shadow:0 0 8px rgba(34,197,94,0.4)}
-  .status-dot.exhausted{background:var(--red)}
-  .key-info{flex:1}
-  .key-name{font-weight:600;font-size:15px}
-  .key-key{font-size:12px;color:var(--muted);font-family:monospace;margin-top:2px}
-  .key-stats{text-align:right}
-  .key-stats .tokens{font-size:14px;font-weight:600}
-  .key-stats .requests{font-size:12px;color:var(--muted)}
-  .key-stats .last{font-size:11px;color:var(--muted)}
-  .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
-  .badge-active{background:rgba(34,197,94,0.15);color:var(--green)}
-  .badge-exhausted{background:rgba(239,68,68,0.15);color:var(--red)}
-  .refresh{display:inline-flex;align-items:center;gap:6px;color:var(--accent);cursor:pointer;font-size:13px;background:none;border:none;margin-bottom:24px}
-  .refresh:hover{text-decoration:underline}
-  @media(max-width:500px){.summary{flex-direction:column}.key-card{flex-wrap:wrap}}
-  .empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
-  .empty-state .icon{font-size:48px;margin-bottom:12px}
-</style>
-</head>
-<body>
-<div class="container">
-  <h1>🔑 Key Balancer</h1>
-  <p class="subtitle">OpenCode Go Zen — load balanced across multiple keys</p>
-  <button class="refresh" onclick="location.reload()">↻ Refresh</button>
-  <div class="summary">
-    <div class="summary-card">
-      <div class="value" id="totalKeys">-</div>
-      <div class="label">Total Keys</div>
-    </div>
-    <div class="summary-card">
-      <div class="value" id="activeKeys">-</div>
-      <div class="label">Active</div>
-    </div>
-    <div class="summary-card">
-      <div class="value" id="totalTokens">-</div>
-      <div class="label">Total Tokens</div>
-    </div>
-    <div class="summary-card">
-      <div class="value" id="totalRequests">-</div>
-      <div class="label">Requests</div>
-    </div>
-  </div>
-  <div id="keyList"></div>
-  <div class="empty-state" id="emptyState" style="display:none">
-    <div class="icon">📭</div>
-    <p>No keys configured. Add them to keys.json</p>
-  </div>
-</div>
-<script>
-async function load() {
-  const res = await fetch('/usage');
-  const keys = await res.json();
-  const total = keys.length;
-  const active = keys.filter(k => !k.exhausted).length;
-  const totalTokens = keys.reduce((s,k) => s + k.total_tokens, 0);
-  const totalReqs = keys.reduce((s,k) => s + k.requests, 0);
 
-  document.getElementById('totalKeys').textContent = total;
-  document.getElementById('activeKeys').textContent = active;
-  document.getElementById('totalTokens').textContent = totalTokens.toLocaleString();
-  document.getElementById('totalRequests').textContent = totalReqs.toLocaleString();
-
-  const list = document.getElementById('keyList');
-  if (keys.length === 0) {
-    document.getElementById('emptyState').style.display = 'block';
-    return;
-  }
-  document.getElementById('emptyState').style.display = 'none';
-
-  list.innerHTML = keys.map(k => {
-    const cls = k.exhausted ? 'exhausted' : '';
-    const dot = k.exhausted ? 'exhausted' : 'active';
-    const badge = k.exhausted ? '<span class="badge badge-exhausted">exhausted</span>' : '<span class="badge badge-active">active</span>';
-    const masked = k.name.length > 1 ? 'sk-••••' + k.name.slice(-4) : k.name;
-    const lastUsed = k.last_used ? new Date(k.last_used).toLocaleString() : 'never';
-    return '<div class="key-card ' + cls + '">' +
-      '<div class="status-dot ' + dot + '"></div>' +
-      '<div class="key-info"><div class="key-name">' + k.name + ' ' + badge + '</div>' +
-      '<div class="key-key">' + masked + '</div></div>' +
-      '<div class="key-stats">' +
-      '<div class="tokens">' + k.total_tokens.toLocaleString() + ' tokens</div>' +
-      '<div class="requests">' + k.requests.toLocaleString() + ' requests</div>' +
-      '<div class="last">' + lastUsed + '</div>' +
-      '</div></div>';
-  }).join('');
-}
-load();
-setInterval(load, 5000);
-</script>
-</body>
-</html>`

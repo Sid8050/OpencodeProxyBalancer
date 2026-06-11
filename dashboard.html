@@ -1,0 +1,616 @@
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenCode Proxy Manager</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: rgba(255,255,255,0.04);
+    --surface-hover: rgba(255,255,255,0.06);
+    --text: #e4e4e7;
+    --text-muted: #71717a;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --blue: #3b82f6;
+    --accent: #22d3ee;
+    --radius: 14px;
+    --font: system-ui, -apple-system, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 32px 20px;
+    background-image:
+      radial-gradient(ellipse 60% 40% at 50% -10%, rgba(34,211,238,0.06), transparent),
+      radial-gradient(ellipse 30% 50% at 85% 85%, rgba(34,197,94,0.04), transparent);
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 6px; }
+  .subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 28px; }
+
+  /* Stats Grid */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius);
+    padding: 18px;
+    text-align: center;
+    transition: transform 0.2s;
+  }
+  .stat-card:hover { transform: translateY(-2px); }
+  .stat-card .value { font-size: 1.8rem; font-weight: 700; }
+  .stat-card .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px; }
+  .stat-card .sublabel { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .stat-card .value.green { color: var(--green); }
+  .stat-card .value.red { color: var(--red); }
+  .stat-card .value.amber { color: var(--amber); }
+  .stat-card .value.blue { color: var(--blue); }
+
+  /* Quota bar */
+  .quota-bar {
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 28px;
+  }
+  .quota-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .quota-header h2 { font-size: 15px; font-weight: 600; }
+  .quota-header .percent { font-size: 18px; font-weight: 700; }
+  .progress-track {
+    height: 8px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease;
+    background: linear-gradient(90deg, var(--green), var(--accent));
+  }
+  .progress-fill.warning { background: linear-gradient(90deg, var(--amber), var(--red)); }
+  .progress-fill.danger { background: var(--red); }
+  .quota-legend { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+
+  /* Section headers */
+  .section { margin-bottom: 28px; }
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .section-header h2 { font-size: 18px; font-weight: 600; }
+  .btn {
+    padding: 10px 18px;
+    border-radius: 10px;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: var(--font);
+  }
+  .btn-primary { background: var(--accent); color: #0a0a0f; }
+  .btn-primary:hover { filter: brightness(1.15); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(34,211,238,0.3); }
+  .btn-danger { background: rgba(239,68,68,0.15); color: var(--red); }
+  .btn-danger:hover { background: rgba(239,68,68,0.25); }
+  .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid rgba(255,255,255,0.08); }
+  .btn-secondary:hover { background: var(--surface-hover); }
+
+  /* Add key form */
+  .add-key-form {
+    display: none;
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 20px;
+    gap: 12px;
+  }
+  .add-key-form.active { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .add-key-form input, .add-key-form textarea {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 12px 14px;
+    color: var(--text);
+    font-size: 14px;
+    font-family: var(--font);
+    outline: none;
+    width: 100%;
+  }
+  .add-key-form input:focus, .add-key-form textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(34,211,238,0.1);
+  }
+  .add-key-form input::placeholder, .add-key-form textarea::placeholder { color: var(--text-muted); }
+  .add-key-form .full-width { grid-column: 1 / -1; }
+  .add-key-form .btn { grid-column: 1 / -1; justify-self: start; }
+
+  /* Key cards */
+  .key-card {
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius);
+    padding: 18px;
+    margin-bottom: 12px;
+    transition: all 0.2s;
+  }
+  .key-card:hover { border-color: rgba(255,255,255,0.1); }
+  .key-card.disabled { opacity: 0.4; }
+  .key-card.exhausted { border-color: rgba(239,68,68,0.2); }
+  .key-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+  }
+  .key-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-dot.active { background: var(--green); box-shadow: 0 0 8px rgba(34,197,94,0.4); }
+  .status-dot.exhausted { background: var(--red); }
+  .status-dot.disabled { background: var(--text-muted); }
+  .key-name { font-weight: 600; font-size: 15px; }
+  .key-note { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .key-key { font-size: 11px; color: var(--text-muted); font-family: monospace; margin-top: 4px; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge-active { background: rgba(34,197,94,0.15); color: var(--green); }
+  .badge-exhausted { background: rgba(239,68,68,0.15); color: var(--red); }
+  .badge-disabled { background: rgba(113,113,122,0.15); color: var(--text-muted); }
+
+  .key-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .metric { text-align: center; }
+  .metric .value { font-size: 16px; font-weight: 600; }
+  .metric .label { font-size: 11px; color: var(--text-muted); }
+
+  .key-progress {
+    margin-bottom: 12px;
+  }
+  .key-progress .progress-track { height: 6px; }
+  .key-progress .progress-fill { border-radius: 3px; }
+  .key-progress-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  .key-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .key-actions button {
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: var(--font);
+  }
+  .key-actions button:hover {
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+  }
+  .key-actions button.danger:hover {
+    background: rgba(239,68,68,0.15);
+    color: var(--red);
+    border-color: rgba(239,68,68,0.2);
+  }
+
+  /* Models section */
+  .models-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .model-card {
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius);
+    padding: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .model-name { font-size: 14px; font-weight: 500; }
+  .model-tokens { font-size: 16px; font-weight: 600; color: var(--accent); }
+
+  .empty-state {
+    text-align: center;
+    padding: 48px 20px;
+    color: var(--text-muted);
+  }
+  .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 14px 20px;
+    font-size: 14px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    transition: all 0.3s ease;
+    opacity: 0;
+    transform: translateY(20px);
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { border-color: var(--green); }
+  .toast.error { border-color: var(--red); }
+
+  .refresh-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .refresh-bar .live {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .live-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .key-card { animation: fadeIn 0.3s ease both; }
+
+  @media (max-width: 600px) {
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .add-key-form.active { grid-template-columns: 1fr; }
+    .key-card-header { flex-direction: column; gap: 8px; }
+    .key-actions { width: 100%; }
+    .key-actions button { flex: 1; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🔑 OpenCode Proxy Manager</h1>
+  <p class="subtitle">Load balancer, usage tracking, and key management</p>
+
+  <div class="refresh-bar">
+    <div class="live"><div class="live-dot"></div> Live — auto-refreshing every 3s</div>
+    <div>Last update: <span id="lastUpdate">just now</span></div>
+  </div>
+
+  <div class="stats-grid" id="statsGrid">
+    <div class="stat-card"><div class="value" id="totalKeys">-</div><div class="label">Total Keys</div></div>
+    <div class="stat-card"><div class="value green" id="activeKeys">-</div><div class="label">Active</div></div>
+    <div class="stat-card"><div class="value red" id="exhaustedKeys">-</div><div class="label">Exhausted</div></div>
+    <div class="stat-card"><div class="value blue" id="totalTokens">-</div><div class="label">Total Tokens</div></div>
+    <div class="stat-card"><div class="value blue" id="totalRequests">-</div><div class="label">Requests</div></div>
+    <div class="stat-card"><div class="value amber" id="totalKeysWithLimit">-</div><div class="label">Keys with Quota</div></div>
+  </div>
+
+  <div class="quota-bar" id="quotaBar" style="display:none">
+    <div class="quota-header">
+      <h2>📊 Overall Quota Usage</h2>
+      <div class="percent" id="quotaPercent">0%</div>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="quotaFill" style="width:0%"></div></div>
+    <div class="quota-legend">
+      <span id="usedTokens">0 used</span>
+      <span id="totalLimit">0 limit</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header">
+      <h2>🔐 API Keys</h2>
+      <button class="btn btn-primary" onclick="toggleAddForm()">+ Add Key</button>
+    </div>
+    <div class="add-key-form" id="addKeyForm">
+      <input type="text" id="newKeyName" placeholder="Account name (e.g., account-2)">
+      <input type="text" id="newKeyValue" placeholder="sk-...">
+      <input type="number" id="newKeyLimit" placeholder="Token limit (optional, e.g. 500000)">
+      <textarea id="newKeyNote" placeholder="Note (optional)" rows="2"></textarea>
+      <button class="btn btn-primary" onclick="addKey()">Add Key</button>
+      <button class="btn btn-secondary" onclick="toggleAddForm()">Cancel</button>
+    </div>
+    <div id="keyList"></div>
+    <div class="empty-state" id="emptyKeys" style="display:none">
+      <div class="icon">🔐</div>
+      <p>No keys configured. Add your first API key above.</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header"><h2>🤖 Model Usage</h2></div>
+    <div class="models-grid" id="modelsGrid"></div>
+    <div class="empty-state" id="emptyModels" style="display:none">
+      <div class="icon">🤖</div>
+      <p>No model usage yet. Send requests to see breakdown.</p>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let lastKeys = [];
+
+async function loadAll() {
+  try {
+    const [keys, stats, models] = await Promise.all([
+      fetch('/api/keys').then(r => r.json()),
+      fetch('/api/stats').then(r => r.json()),
+      fetch('/api/models').then(r => r.json())
+    ]);
+    renderStats(stats);
+    renderKeys(keys);
+    renderModels(models);
+    document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+  } catch (e) {
+    showToast('Failed to load data', 'error');
+  }
+}
+
+function renderStats(stats) {
+  document.getElementById('totalKeys').textContent = stats.total_keys;
+  document.getElementById('activeKeys').textContent = stats.active_keys;
+  document.getElementById('exhaustedKeys').textContent = stats.exhausted_keys;
+  document.getElementById('totalTokens').textContent = stats.total_tokens.toLocaleString();
+  document.getElementById('totalRequests').textContent = stats.total_requests.toLocaleString();
+  document.getElementById('totalKeysWithLimit').textContent = stats.total_limit > 0 ? Math.round(stats.percent || 0) + '%' : '∞';
+
+  const bar = document.getElementById('quotaBar');
+  if (stats.total_limit > 0) {
+    bar.style.display = 'block';
+    document.getElementById('quotaPercent').textContent = Math.round(stats.percent) + '%';
+    document.getElementById('usedTokens').textContent = stats.used_limit.toLocaleString() + ' used';
+    document.getElementById('totalLimit').textContent = stats.total_limit.toLocaleString() + ' limit';
+    const fill = document.getElementById('quotaFill');
+    fill.style.width = Math.min(stats.percent, 100) + '%';
+    fill.className = 'progress-fill';
+    if (stats.percent > 90) fill.classList.add('danger');
+    else if (stats.percent > 70) fill.classList.add('warning');
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function renderKeys(keys) {
+  const list = document.getElementById('keyList');
+  const empty = document.getElementById('emptyKeys');
+  if (keys.length === 0) {
+    list.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  lastKeys = keys;
+  list.innerHTML = keys.map((k, i) => {
+    const status = k.disabled ? 'disabled' : (k.exhausted ? 'exhausted' : 'active');
+    const badgeClass = k.disabled ? 'badge-disabled' : (k.exhausted ? 'badge-exhausted' : 'badge-active');
+    const badgeText = k.disabled ? 'disabled' : (k.exhausted ? 'exhausted' : 'active');
+    const masked = k.key ? 'sk-••••' + k.key.slice(-4) : 'no key';
+    const lastUsed = k.last_used && k.last_used !== '0001-01-01T00:00:00Z' ? new Date(k.last_used).toLocaleString() : 'never';
+
+    let progressHtml = '';
+    if (k.limit > 0) {
+      const pct = Math.min(k.percent || 0, 100);
+      const cls = pct > 90 ? 'danger' : (pct > 70 ? 'warning' : '');
+      progressHtml = `<div class="key-progress">
+        <div class="progress-track"><div class="progress-fill ${cls}" style="width:${pct}%"></div></div>
+        <div class="key-progress-labels">
+          <span>${k.total_tokens.toLocaleString()} used</span>
+          <span>${k.remaining.toLocaleString()} remaining / ${k.limit.toLocaleString()}</span>
+        </div>
+      </div>`;
+    }
+
+    let modelBreakdown = '';
+    if (k.models && Object.keys(k.models).length > 0) {
+      const items = Object.entries(k.models).map(([m, t]) => `${m}: ${t.toLocaleString()}`).join(' · ');
+      modelBreakdown = `<div class="key-note" style="margin-bottom:8px">${items}</div>`;
+    }
+
+    return `<div class="key-card ${status}" style="animation-delay:${i * 0.05}s">
+      <div class="key-card-header">
+        <div>
+          <div class="key-title">
+            <div class="status-dot ${status}"></div>
+            <div class="key-name">${k.name} <span class="badge ${badgeClass}">${badgeText}</span></div>
+          </div>
+          <div class="key-note">${k.note || ''}</div>
+          <div class="key-key">${masked}</div>
+          ${modelBreakdown}
+        </div>
+      </div>
+      <div class="key-metrics">
+        <div class="metric"><div class="value">${k.requests.toLocaleString()}</div><div class="label">Requests</div></div>
+        <div class="metric"><div class="value">${k.total_tokens.toLocaleString()}</div><div class="label">Tokens</div></div>
+        <div class="metric"><div class="value">${lastUsed}</div><div class="label">Last Used</div></div>
+      </div>
+      ${progressHtml}
+      <div class="key-actions">
+        <button onclick="toggleKey('${k.name}', ${!k.disabled})">${k.disabled ? 'Enable' : 'Disable'}</button>
+        <button onclick="toggleExhausted('${k.name}', ${!k.exhausted})">${k.exhausted ? 'Reset' : 'Mark Exhausted'}</button>
+        <button onclick="resetUsage('${k.name}')">Reset Usage</button>
+        <button class="danger" onclick="deleteKey('${k.name}')">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderModels(models) {
+  const grid = document.getElementById('modelsGrid');
+  const empty = document.getElementById('emptyModels');
+  const entries = Object.entries(models);
+  if (entries.length === 0) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  grid.innerHTML = entries.map(([name, tokens]) => `
+    <div class="model-card">
+      <div class="model-name">${name}</div>
+      <div class="model-tokens">${tokens.toLocaleString()}</div>
+    </div>
+  `).join('');
+}
+
+function toggleAddForm() {
+  const form = document.getElementById('addKeyForm');
+  form.classList.toggle('active');
+}
+
+async function addKey() {
+  const name = document.getElementById('newKeyName').value.trim();
+  const key = document.getElementById('newKeyValue').value.trim();
+  const limit = parseInt(document.getElementById('newKeyLimit').value) || 0;
+  const note = document.getElementById('newKeyNote').value.trim();
+
+  if (!name || !key) {
+    showToast('Name and key are required', 'error');
+    return;
+  }
+
+  const res = await fetch('/api/keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, key, limit, note })
+  });
+  const data = await res.json();
+  if (res.ok) {
+    showToast(`Key '${name}' added`, 'success');
+    document.getElementById('newKeyName').value = '';
+    document.getElementById('newKeyValue').value = '';
+    document.getElementById('newKeyLimit').value = '';
+    document.getElementById('newKeyNote').value = '';
+    toggleAddForm();
+    loadAll();
+  } else {
+    showToast(data.error || 'Failed to add key', 'error');
+  }
+}
+
+async function toggleKey(name, disabled) {
+  const res = await fetch(`/api/keys/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ disabled })
+  });
+  if (res.ok) {
+    showToast(`Key '${name}' ${disabled ? 'disabled' : 'enabled'}`, 'success');
+    loadAll();
+  } else {
+    showToast('Failed to update key', 'error');
+  }
+}
+
+async function toggleExhausted(name, exhausted) {
+  const res = await fetch(`/api/keys/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ exhausted })
+  });
+  if (res.ok) {
+    showToast(`Key '${name}' ${exhausted ? 'marked exhausted' : 'reset'}`, 'success');
+    loadAll();
+  } else {
+    showToast('Failed to update key', 'error');
+  }
+}
+
+async function resetUsage(name) {
+  const res = await fetch(`/api/keys/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ exhausted: false })
+  });
+  if (res.ok) {
+    // Reset usage locally
+    await fetch(`/api/keys/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disabled: false })
+    });
+    showToast(`Usage for '${name}' reset`, 'success');
+    loadAll();
+  } else {
+    showToast('Failed to reset', 'error');
+  }
+}
+
+async function deleteKey(name) {
+  if (!confirm(`Delete key '${name}'? This cannot be undone.`)) return;
+  const res = await fetch(`/api/keys/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  if (res.ok) {
+    showToast(`Key '${name}' deleted`, 'success');
+    loadAll();
+  } else {
+    showToast('Failed to delete key', 'error');
+  }
+}
+
+function showToast(msg, type) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.className = 'toast ' + type;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+loadAll();
+setInterval(loadAll, 3000);
+</script>
+</body>
+</html>`
