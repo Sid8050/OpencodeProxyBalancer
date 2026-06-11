@@ -4,388 +4,346 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OpenCode Proxy Manager</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          'display': ['Playfair Display', 'serif'],
+          'mono': ['JetBrains Mono', 'monospace'],
+          'sans': ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+        },
+        colors: {
+          'bg': '#0a0a0f',
+          'surface': 'rgba(255,255,255,0.04)',
+          'surface-hover': 'rgba(255,255,255,0.08)',
+          'glass': 'rgba(255,255,255,0.03)',
+          'glass-border': 'rgba(255,255,255,0.08)',
+          'accent': '#22d3ee',
+          'accent-dim': 'rgba(34,211,238,0.15)',
+          'emerald': '#22c55e',
+          'emerald-dim': 'rgba(34,197,94,0.15)',
+          'red': '#ef4444',
+          'red-dim': 'rgba(239,68,68,0.15)',
+          'amber': '#f59e0b',
+          'amber-dim': 'rgba(245,158,11,0.15)',
+        },
+        animation: {
+          'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+          'fade-in-up': 'fadeInUp 0.6s ease-out forwards',
+          'slide-in': 'slideIn 0.4s ease-out forwards',
+        },
+        keyframes: {
+          fadeInUp: {
+            '0%': { opacity: '0', transform: 'translateY(20px)' },
+            '100%': { opacity: '1', transform: 'translateY(0)' },
+          },
+          slideIn: {
+            '0%': { opacity: '0', transform: 'translateX(-20px)' },
+            '100%': { opacity: '1', transform: 'translateX(0)' },
+          },
+        },
+      },
+    },
+  }
+</script>
 <style>
-  :root {
-    --bg: #0a0a0f;
-    --surface: rgba(255,255,255,0.04);
-    --surface-hover: rgba(255,255,255,0.06);
-    --text: #e4e4e7;
-    --text-muted: #71717a;
-    --green: #22c55e;
-    --red: #ef4444;
-    --amber: #f59e0b;
-    --blue: #3b82f6;
-    --accent: #22d3ee;
-    --radius: 14px;
-    --font: system-ui, -apple-system, sans-serif;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    font-family: var(--font);
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    padding: 32px 20px;
-    background-image:
-      radial-gradient(ellipse 60% 40% at 50% -10%, rgba(34,211,238,0.06), transparent),
-      radial-gradient(ellipse 30% 50% at 85% 85%, rgba(34,197,94,0.04), transparent);
+    background: #0a0a0f;
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
   }
-  .container { max-width: 900px; margin: 0 auto; }
-  h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 6px; }
-  .subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 28px; }
-
-  .refresh-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 24px;
-    font-size: 12px;
-    color: var(--text-muted);
+  .glass {
+    background: rgba(255,255,255,0.03);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.08);
   }
-  .live { display: inline-flex; align-items: center; gap: 6px; }
-  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-
-  .budget-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 12px;
-    margin-bottom: 28px;
+  .glass-strong {
+    background: rgba(255,255,255,0.05);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .gradient-bg {
+    background: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(34,211,238,0.08), transparent),
+                radial-gradient(ellipse 40% 60% at 80% 80%, rgba(34,197,94,0.04), transparent);
   }
   .budget-card {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: var(--radius);
-    padding: 20px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .budget-card .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
+  .budget-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+    border-color: rgba(255,255,255,0.15);
   }
-  .budget-card .header h3 { font-size: 13px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-  .budget-card .header .remaining { font-size: 20px; font-weight: 700; }
-  .budget-card .header .remaining.green { color: var(--green); }
-  .budget-card .header .remaining.amber { color: var(--amber); }
-  .budget-card .header .remaining.red { color: var(--red); }
-  .progress-track {
-    height: 8px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%;
-    border-radius: 4px;
-    transition: width 0.5s ease;
-    background: linear-gradient(90deg, var(--green), var(--accent));
-  }
-  .progress-fill.warning { background: linear-gradient(90deg, var(--amber), var(--red)); }
-  .progress-fill.danger { background: var(--red); }
-  .budget-labels {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 8px;
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 12px;
-    margin-bottom: 28px;
-  }
-  .stat-card {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: var(--radius);
-    padding: 18px;
-    text-align: center;
-  }
-  .stat-card .value { font-size: 1.6rem; font-weight: 700; }
-  .stat-card .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px; }
-  .stat-card .value.green { color: var(--green); }
-  .stat-card .value.red { color: var(--red); }
-  .stat-card .value.amber { color: var(--amber); }
-  .stat-card .value.blue { color: var(--blue); }
-
-  .section { margin-bottom: 28px; }
-  .section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
-  }
-  .section-header h2 { font-size: 18px; font-weight: 600; }
-  .btn {
-    padding: 10px 18px;
-    border-radius: 10px;
-    border: none;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-family: var(--font);
-  }
-  .btn-primary { background: var(--accent); color: #0a0a0f; }
-  .btn-primary:hover { filter: brightness(1.15); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(34,211,238,0.3); }
-  .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid rgba(255,255,255,0.08); }
-  .btn-secondary:hover { background: var(--surface-hover); }
-
-  .add-key-form {
-    display: none;
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: var(--radius);
-    padding: 20px;
-    margin-bottom: 20px;
-    gap: 12px;
-  }
-  .add-key-form.active { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .add-key-form input, .add-key-form textarea {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 10px;
-    padding: 12px 14px;
-    color: var(--text);
-    font-size: 14px;
-    font-family: var(--font);
-    outline: none;
-    width: 100%;
-  }
-  .add-key-form input:focus, .add-key-form textarea:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(34,211,238,0.1);
-  }
-  .add-key-form input::placeholder, .add-key-form textarea::placeholder { color: var(--text-muted); }
-
   .key-card {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: var(--radius);
-    padding: 18px;
-    margin-bottom: 12px;
-    transition: all 0.2s;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .key-card:hover { border-color: rgba(255,255,255,0.1); }
-  .key-card.disabled { opacity: 0.4; }
-  .key-card.exhausted { border-color: rgba(239,68,68,0.2); }
-  .key-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 12px;
+  .key-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255,255,255,0.12);
   }
-  .key-title {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+  .btn-primary {
+    background: linear-gradient(135deg, #22d3ee 0%, #0ea5e9 100%);
+    transition: all 0.3s ease;
+  }
+  .btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 30px rgba(34,211,238,0.3);
+    filter: brightness(1.1);
+  }
+  .btn-secondary {
+    transition: all 0.3s ease;
+  }
+  .btn-secondary:hover {
+    background: rgba(255,255,255,0.08);
+  }
+  .progress-bar {
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
   }
   .status-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    flex-shrink: 0;
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
-  .status-dot.active { background: var(--green); box-shadow: 0 0 8px rgba(34,197,94,0.4); }
-  .status-dot.exhausted { background: var(--red); }
-  .status-dot.disabled { background: var(--text-muted); }
-  .key-name { font-weight: 600; font-size: 15px; }
-  .key-note { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-  .key-key { font-size: 11px; color: var(--text-muted); font-family: monospace; margin-top: 4px; }
-  .badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 600;
-  }
-  .badge-active { background: rgba(34,197,94,0.15); color: var(--green); }
-  .badge-exhausted { background: rgba(239,68,68,0.15); color: var(--red); }
-  .badge-disabled { background: rgba(113,113,122,0.15); color: var(--text-muted); }
-
-  .key-metrics {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 12px;
-    margin-bottom: 12px;
-  }
-  .metric { text-align: center; }
-  .metric .value { font-size: 16px; font-weight: 600; }
-  .metric .label { font-size: 11px; color: var(--text-muted); }
-
-  .key-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  .key-actions button {
-    padding: 6px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(255,255,255,0.08);
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-family: var(--font);
-  }
-  .key-actions button:hover {
-    background: rgba(255,255,255,0.06);
-    color: var(--text);
-  }
-  .key-actions button.danger:hover {
-    background: rgba(239,68,68,0.15);
-    color: var(--red);
-    border-color: rgba(239,68,68,0.2);
-  }
-
-  .models-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 12px;
+  .toast {
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
   }
   .model-card {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: var(--radius);
-    padding: 16px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .model-info { flex: 1; }
-  .model-name { font-size: 14px; font-weight: 500; }
-  .model-tokens { font-size: 12px; color: var(--text-muted); }
-  .model-cost { font-size: 18px; font-weight: 700; color: var(--accent); }
-
-  .empty-state {
-    text-align: center;
-    padding: 48px 20px;
-    color: var(--text-muted);
-  }
-  .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
-
-  .toast {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 12px;
-    padding: 14px 20px;
-    font-size: 14px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
     transition: all 0.3s ease;
-    opacity: 0;
-    transform: translateY(20px);
-    pointer-events: none;
   }
-  .toast.show { opacity: 1; transform: translateY(0); }
-  .toast.success { border-color: var(--green); }
-  .toast.error { border-color: var(--red); }
-
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
+  .model-card:hover {
+    transform: translateX(4px);
+    border-color: rgba(34,211,238,0.3);
   }
-  .key-card { animation: fadeIn 0.3s ease both; }
+  .add-key-form {
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .add-key-form.active {
+    display: grid;
+    animation: fadeInUp 0.4s ease-out forwards;
+  }
+  .stagger-1 { animation-delay: 0.1s; }
+  .stagger-2 { animation-delay: 0.2s; }
+  .stagger-3 { animation-delay: 0.3s; }
+  .stagger-4 { animation-delay: 0.4s; }
+  .stagger-5 { animation-delay: 0.5s; }
+  .stagger-6 { animation-delay: 0.6s; }
 
-  @media (max-width: 600px) {
-    .budget-grid { grid-template-columns: 1fr; }
-    .stats-grid { grid-template-columns: repeat(2, 1fr); }
-    .add-key-form.active { grid-template-columns: 1fr; }
-    .key-actions button { flex: 1; }
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(255,255,255,0.02);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.1);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.2);
+  }
+
+  .glow-green {
+    box-shadow: 0 0 20px rgba(34,197,94,0.3);
+  }
+  .glow-red {
+    box-shadow: 0 0 20px rgba(239,68,68,0.3);
+  }
+  .glow-amber {
+    box-shadow: 0 0 20px rgba(245,158,11,0.3);
+  }
+
+  .cost-display {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
   }
 </style>
 </head>
-<body>
-<div class="container">
-  <h1>🔑 OpenCode Proxy Manager</h1>
-  <p class="subtitle">Dollar-based usage tracking and budget management</p>
+<body class="bg-bg min-h-screen text-white gradient-bg">
 
-  <div class="refresh-bar">
-    <div class="live"><div class="live-dot"></div> Live — auto-refreshing every 3s</div>
-    <div>Last update: <span id="lastUpdate">just now</span></div>
-  </div>
+<div class="container mx-auto px-4 py-8 max-w-6xl">
 
-  <div class="budget-grid" id="budgetGrid">
-    <div class="budget-card">
-      <div class="header">
-        <h3>5 Hour Budget</h3>
-        <div class="remaining green" id="rem5H">$12.00</div>
+  <!-- Header -->
+  <header class="mb-8 animate-fade-in-up">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div>
+        <h1 class="font-display text-4xl md:text-5xl font-bold text-white mb-2 tracking-tight">
+          OpenCode Proxy
+        </h1>
+        <p class="text-gray-400 text-sm font-sans">
+          Multi-key load balancer with real-time dollar tracking
+        </p>
       </div>
-      <div class="progress-track"><div class="progress-fill" id="bar5H" style="width:0%"></div></div>
-      <div class="budget-labels">
-        <span id="spent5H">$0.00 spent</span>
-        <span>$12.00 limit</span>
-      </div>
-    </div>
-    <div class="budget-card">
-      <div class="header">
-        <h3>Weekly Budget</h3>
-        <div class="remaining green" id="remWeek">$30.00</div>
-      </div>
-      <div class="progress-track"><div class="progress-fill" id="barWeek" style="width:0%"></div></div>
-      <div class="budget-labels">
-        <span id="spentWeek">$0.00 spent</span>
-        <span>$30.00 limit</span>
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-full glass text-xs font-mono">
+          <div class="w-2 h-2 rounded-full bg-emerald status-dot"></div>
+          <span class="text-gray-300">Live</span>
+        </div>
+        <div class="text-xs text-gray-500 font-mono" id="lastUpdate">
+          just now
+        </div>
       </div>
     </div>
-    <div class="budget-card">
-      <div class="header">
-        <h3>Monthly Budget</h3>
-        <div class="remaining green" id="remMonth">$60.00</div>
-      </div>
-      <div class="progress-track"><div class="progress-fill" id="barMonth" style="width:0%"></div></div>
-      <div class="budget-labels">
-        <span id="spentMonth">$0.00 spent</span>
-        <span>$60.00 limit</span>
-      </div>
-    </div>
-  </div>
+  </header>
 
-  <div class="stats-grid" id="statsGrid">
-    <div class="stat-card"><div class="value" id="totalKeys">-</div><div class="label">Total Keys</div></div>
-    <div class="stat-card"><div class="value green" id="activeKeys">-</div><div class="label">Active</div></div>
-    <div class="stat-card"><div class="value red" id="exhaustedKeys">-</div><div class="label">Exhausted</div></div>
-    <div class="stat-card"><div class="value blue" id="totalDollars">-</div><div class="label">Total Spent</div></div>
-    <div class="stat-card"><div class="value blue" id="totalTokens">-</div><div class="label">Total Tokens</div></div>
-    <div class="stat-card"><div class="value amber" id="totalRequests">-</div><div class="label">Requests</div></div>
-  </div>
+  <!-- Budget Overview -->
+  <section class="mb-8">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
 
-  <div class="section">
-    <div class="section-header">
-      <h2>🔐 API Keys</h2>
-      <button class="btn btn-primary" onclick="toggleAddForm()">+ Add Key</button>
+      <!-- 5 Hour Budget -->
+      <div class="budget-card glass rounded-2xl p-6 animate-fade-in-up stagger-1 opacity-0">
+        <div class="flex justify-between items-start mb-4">
+          <div>
+            <p class="text-xs text-gray-500 font-mono uppercase tracking-wider mb-1">5 Hour Budget</p>
+            <h3 class="font-display text-2xl font-bold text-white cost-display" id="rem5H">$12.00</h3>
+          </div>
+          <div class="px-2 py-1 rounded-lg bg-emerald-dim text-emerald text-xs font-mono font-semibold" id="badge5H">
+            $12.00 limit
+          </div>
+        </div>
+        <div class="w-full h-3 bg-gray-800 rounded-full overflow-hidden mb-3">
+          <div id="bar5H" class="progress-bar h-full rounded-full bg-gradient-to-r from-emerald to-accent" style="width: 0%"></div>
+        </div>
+        <div class="flex justify-between text-xs font-mono">
+          <span class="text-gray-500" id="spent5H">$0.00 spent</span>
+          <span class="text-gray-500" id="pct5H">0%</span>
+        </div>
+      </div>
+
+      <!-- Weekly Budget -->
+      <div class="budget-card glass rounded-2xl p-6 animate-fade-in-up stagger-2 opacity-0">
+        <div class="flex justify-between items-start mb-4">
+          <div>
+            <p class="text-xs text-gray-500 font-mono uppercase tracking-wider mb-1">Weekly Budget</p>
+            <h3 class="font-display text-2xl font-bold text-white cost-display" id="remWeek">$30.00</h3>
+          </div>
+          <div class="px-2 py-1 rounded-lg bg-emerald-dim text-emerald text-xs font-mono font-semibold" id="badgeWeek">
+            $30.00 limit
+          </div>
+        </div>
+        <div class="w-full h-3 bg-gray-800 rounded-full overflow-hidden mb-3">
+          <div id="barWeek" class="progress-bar h-full rounded-full bg-gradient-to-r from-emerald to-accent" style="width: 0%"></div>
+        </div>
+        <div class="flex justify-between text-xs font-mono">
+          <span class="text-gray-500" id="spentWeek">$0.00 spent</span>
+          <span class="text-gray-500" id="pctWeek">0%</span>
+        </div>
+      </div>
+
+      <!-- Monthly Budget -->
+      <div class="budget-card glass rounded-2xl p-6 animate-fade-in-up stagger-3 opacity-0">
+        <div class="flex justify-between items-start mb-4">
+          <div>
+            <p class="text-xs text-gray-500 font-mono uppercase tracking-wider mb-1">Monthly Budget</p>
+            <h3 class="font-display text-2xl font-bold text-white cost-display" id="remMonth">$60.00</h3>
+          </div>
+          <div class="px-2 py-1 rounded-lg bg-emerald-dim text-emerald text-xs font-mono font-semibold" id="badgeMonth">
+            $60.00 limit
+          </div>
+        </div>
+        <div class="w-full h-3 bg-gray-800 rounded-full overflow-hidden mb-3">
+          <div id="barMonth" class="progress-bar h-full rounded-full bg-gradient-to-r from-emerald to-accent" style="width: 0%"></div>
+        </div>
+        <div class="flex justify-between text-xs font-mono">
+          <span class="text-gray-500" id="spentMonth">$0.00 spent</span>
+          <span class="text-gray-500" id="pctMonth">0%</span>
+        </div>
+      </div>
     </div>
-    <div class="add-key-form" id="addKeyForm">
-      <input type="text" id="newKeyName" placeholder="Account name (e.g., account-2)">
-      <input type="text" id="newKeyValue" placeholder="sk-...">
-      <textarea id="newKeyNote" placeholder="Note (optional)" rows="2"></textarea>
-      <button class="btn btn-primary" onclick="addKey()">Add Key</button>
-      <button class="btn btn-secondary" onclick="toggleAddForm()">Cancel</button>
+  </section>
+
+  <!-- Quick Stats -->
+  <section class="mb-8">
+    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+      <div class="glass rounded-xl p-4 text-center animate-fade-in-up stagger-1 opacity-0">
+        <p class="text-2xl font-bold font-display text-white mb-1" id="totalKeys">-</p>
+        <p class="text-xs text-gray-500 font-mono uppercase">Keys</p>
+      </div>
+      <div class="glass rounded-xl p-4 text-center animate-fade-in-up stagger-2 opacity-0">
+        <p class="text-2xl font-bold font-display text-emerald mb-1" id="activeKeys">-</p>
+        <p class="text-xs text-gray-500 font-mono uppercase">Active</p>
+      </div>
+      <div class="glass rounded-xl p-4 text-center animate-fade-in-up stagger-3 opacity-0">
+        <p class="text-2xl font-bold font-display text-red mb-1" id="exhaustedKeys">-</p>
+        <p class="text-xs text-gray-500 font-mono uppercase">Exhausted</p>
+      </div>
+      <div class="glass rounded-xl p-4 text-center animate-fade-in-up stagger-4 opacity-0">
+        <p class="text-2xl font-bold font-display text-accent mb-1 cost-display" id="totalDollars">-</p>
+        <p class="text-xs text-gray-500 font-mono uppercase">Spent</p>
+      </div>
+      <div class="glass rounded-xl p-4 text-center animate-fade-in-up stagger-5 opacity-0">
+        <p class="text-2xl font-bold font-display text-accent mb-1" id="totalTokens">-</p>
+        <p class="text-xs text-gray-500 font-mono uppercase">Tokens</p>
+      </div>
+      <div class="glass rounded-xl p-4 text-center animate-fade-in-up stagger-6 opacity-0">
+        <p class="text-2xl font-bold font-display text-amber mb-1" id="totalRequests">-</p>
+        <p class="text-xs text-gray-500 font-mono uppercase">Requests</p>
+      </div>
     </div>
+  </section>
+
+  <!-- API Keys Section -->
+  <section class="mb-8">
+    <div class="flex justify-between items-center mb-6">
+      <h2 class="font-display text-2xl font-bold text-white">API Keys</h2>
+      <button onclick="toggleAddForm()" class="btn-primary px-5 py-2.5 rounded-xl text-sm font-semibold text-black font-sans">
+        + Add Key
+      </button>
+    </div>
+
+    <!-- Add Key Form -->
+    <div id="addKeyForm" class="add-key-form glass rounded-2xl p-6 mb-6 hidden">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="block text-xs text-gray-500 font-mono uppercase mb-2">Account Name</label>
+          <input type="text" id="newKeyName" placeholder="e.g., account-2" 
+            class="w-full px-4 py-3 rounded-xl bg-gray-900/50 border border-gray-700 text-white placeholder-gray-600 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all font-sans">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 font-mono uppercase mb-2">API Key</label>
+          <input type="text" id="newKeyValue" placeholder="sk-..." 
+            class="w-full px-4 py-3 rounded-xl bg-gray-900/50 border border-gray-700 text-white placeholder-gray-600 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all font-mono text-sm">
+        </div>
+      </div>
+      <div class="mb-4">
+        <label class="block text-xs text-gray-500 font-mono uppercase mb-2">Note</label>
+        <textarea id="newKeyNote" placeholder="Optional description..." rows="2"
+          class="w-full px-4 py-3 rounded-xl bg-gray-900/50 border border-gray-700 text-white placeholder-gray-600 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all font-sans"></textarea>
+      </div>
+      <div class="flex gap-3">
+        <button onclick="addKey()" class="btn-primary px-6 py-2.5 rounded-xl text-sm font-semibold text-black font-sans">
+          Add Key
+        </button>
+        <button onclick="toggleAddForm()" class="btn-secondary px-6 py-2.5 rounded-xl text-sm font-semibold text-gray-400 border border-gray-700 font-sans">
+          Cancel
+        </button>
+      </div>
+    </div>
+
     <div id="keyList"></div>
-    <div class="empty-state" id="emptyKeys" style="display:none">
-      <div class="icon">🔐</div>
-      <p>No keys configured. Add your first API key above.</p>
+    <div id="emptyKeys" class="hidden text-center py-16">
+      <div class="text-6xl mb-4">🔐</div>
+      <p class="text-gray-500 text-sm">No keys configured. Add your first API key above.</p>
     </div>
-  </div>
+  </section>
 
-  <div class="section">
-    <div class="section-header"><h2>🤖 Model Usage</h2></div>
-    <div class="models-grid" id="modelsGrid"></div>
-    <div class="empty-state" id="emptyModels" style="display:none">
-      <div class="icon">🤖</div>
-      <p>No model usage yet. Send requests to see breakdown.</p>
+  <!-- Model Usage Section -->
+  <section class="mb-8">
+    <h2 class="font-display text-2xl font-bold text-white mb-6">Model Usage</h2>
+    <div id="modelsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    <div id="emptyModels" class="hidden text-center py-16">
+      <div class="text-6xl mb-4">🤖</div>
+      <p class="text-gray-500 text-sm">No model usage yet. Send requests to see breakdown.</p>
     </div>
-  </div>
+  </section>
+
 </div>
 
-<div class="toast" id="toast"></div>
+<!-- Toast -->
+<div id="toast" class="toast fixed bottom-6 right-6 glass-strong rounded-xl px-5 py-3 text-sm font-sans opacity-0 translate-y-5 z-50"></div>
 
 <script>
 let lastKeys = [];
@@ -417,14 +375,29 @@ function updateBudgetCard(id, spent, limit, remaining, percent) {
   const remEl = document.getElementById('rem' + id);
   const barEl = document.getElementById('bar' + id);
   const spentEl = document.getElementById('spent' + id);
+  const pctEl = document.getElementById('pct' + id);
+  const badgeEl = document.getElementById('badge' + id);
 
   remEl.textContent = '$' + remaining.toFixed(2);
-  remEl.className = 'remaining ' + (remaining < 5 ? 'red' : (remaining < 15 ? 'amber' : 'green'));
-  barEl.style.width = Math.min(percent, 100) + '%';
-  barEl.className = 'progress-fill';
-  if (percent > 90) barEl.classList.add('danger');
-  else if (percent > 70) barEl.classList.add('warning');
   spentEl.textContent = '$' + spent.toFixed(2) + ' spent';
+  pctEl.textContent = Math.min(percent, 100).toFixed(1) + '%';
+  badgeEl.textContent = '$' + limit.toFixed(2) + ' limit';
+
+  barEl.style.width = Math.min(percent, 100) + '%';
+
+  if (percent > 90) {
+    barEl.className = 'progress-bar h-full rounded-full bg-gradient-to-r from-red to-red-600';
+    badgeEl.className = 'px-2 py-1 rounded-lg bg-red-dim text-red text-xs font-mono font-semibold';
+    remEl.className = 'font-display text-2xl font-bold text-red cost-display';
+  } else if (percent > 70) {
+    barEl.className = 'progress-bar h-full rounded-full bg-gradient-to-r from-amber to-red';
+    badgeEl.className = 'px-2 py-1 rounded-lg bg-amber-dim text-amber text-xs font-mono font-semibold';
+    remEl.className = 'font-display text-2xl font-bold text-amber cost-display';
+  } else {
+    barEl.className = 'progress-bar h-full rounded-full bg-gradient-to-r from-emerald to-accent';
+    badgeEl.className = 'px-2 py-1 rounded-lg bg-emerald-dim text-emerald text-xs font-mono font-semibold';
+    remEl.className = 'font-display text-2xl font-bold text-emerald cost-display';
+  }
 }
 
 function renderStats(stats) {
@@ -441,59 +414,92 @@ function renderKeys(keys) {
   const empty = document.getElementById('emptyKeys');
   if (keys.length === 0) {
     list.innerHTML = '';
-    empty.style.display = 'block';
+    empty.classList.remove('hidden');
     return;
   }
-  empty.style.display = 'none';
+  empty.classList.add('hidden');
 
   lastKeys = keys;
   list.innerHTML = keys.map((k, i) => {
     const status = k.disabled ? 'disabled' : (k.exhausted ? 'exhausted' : 'active');
-    const badgeClass = k.disabled ? 'badge-disabled' : (k.exhausted ? 'badge-exhausted' : 'badge-active');
-    const badgeText = k.disabled ? 'disabled' : (k.exhausted ? 'exhausted' : 'active');
+    const badgeColor = k.disabled ? 'bg-gray-700 text-gray-400' : (k.exhausted ? 'bg-red-dim text-red' : 'bg-emerald-dim text-emerald');
+    const badgeText = k.disabled ? 'Disabled' : (k.exhausted ? 'Exhausted' : 'Active');
     const masked = k.key ? 'sk-...' + k.key.slice(-4) : 'no key';
-    const lastUsed = k.last_used && k.last_used !== '0001-01-01T00:00:00Z' ? new Date(k.last_used).toLocaleString() : 'never';
+    const lastUsed = k.last_used && k.last_used !== '0001-01-01T00:00:00Z' ? new Date(k.last_used).toLocaleString() : 'Never';
 
     let spendBreakdown = '';
     if (k.spend_5h > 0 || k.spend_week > 0 || k.spend_month > 0) {
-      spendBreakdown = '<div class="key-note">5h: $' + k.spend_5h.toFixed(2) +
-        ' · week: $' + k.spend_week.toFixed(2) +
-        ' · month: $' + k.spend_month.toFixed(2) + '</div>';
+      spendBreakdown = `
+        <div class="flex gap-4 text-xs font-mono text-gray-500 mt-2">
+          <span>5h: $${k.spend_5h.toFixed(2)}</span>
+          <span>Week: $${k.spend_week.toFixed(2)}</span>
+          <span>Month: $${k.spend_month.toFixed(2)}</span>
+        </div>
+      `;
     }
 
     let modelBreakdown = '';
     if (k.models && Object.keys(k.models).length > 0) {
-      const items = Object.entries(k.models).map(([m, s]) =>
-        m + ': $' + s.dollars.toFixed(2) + ' (' + s.tokens.toLocaleString() + ' tokens)'
-      ).join(' · ');
-      modelBreakdown = '<div class="key-note" style="margin-bottom:8px">' + items + '</div>';
+      const items = Object.entries(k.models).map(([m, s]) => {
+        return `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-800/50 text-xs font-mono">
+          <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+          ${m}: $${s.dollars.toFixed(2)} (${s.tokens.toLocaleString()} tokens)
+        </span>`;
+      }).join('');
+      modelBreakdown = `<div class="flex flex-wrap gap-2 mt-3">${items}</div>`;
     }
 
-    return '<div class="key-card ' + status + '" style="animation-delay:' + (i * 0.05) + 's">' +
-      '<div class="key-card-header">' +
-      '<div>' +
-      '<div class="key-title">' +
-      '<div class="status-dot ' + status + '"></div>' +
-      '<div class="key-name">' + k.name + ' <span class="badge ' + badgeClass + '">' + badgeText + '</span></div>' +
-      '</div>' +
-      '<div class="key-note">' + (k.note || '') + '</div>' +
-      '<div class="key-key">' + masked + '</div>' +
-      spendBreakdown +
-      modelBreakdown +
-      '</div>' +
-      '</div>' +
-      '<div class="key-metrics">' +
-      '<div class="metric"><div class="value">' + k.requests.toLocaleString() + '</div><div class="label">Requests</div></div>' +
-      '<div class="metric"><div class="value">$' + k.dollars.toFixed(2) + '</div><div class="label">Cost</div></div>' +
-      '<div class="metric"><div class="value">' + k.total_tokens.toLocaleString() + '</div><div class="label">Tokens</div></div>' +
-      '<div class="metric"><div class="value">' + lastUsed + '</div><div class="label">Last Used</div></div>' +
-      '</div>' +
-      '<div class="key-actions">' +
-      '<button onclick="toggleKey(\'' + k.name + '\', ' + !k.disabled + ')">' + (k.disabled ? 'Enable' : 'Disable') + '</button>' +
-      '<button onclick="toggleExhausted(\'' + k.name + '\', ' + !k.exhausted + ')">' + (k.exhausted ? 'Reset' : 'Mark Exhausted') + '</button>' +
-      '<button class="danger" onclick="deleteKey(\'' + k.name + '\')">Delete</button>' +
-      '</div>' +
-      '</div>';
+    return `
+      <div class="key-card glass rounded-2xl p-6 mb-4 ${status === 'disabled' ? 'opacity-40' : ''} ${status === 'exhausted' ? 'border-red/20' : ''}" style="animation-delay: ${i * 0.1}s">
+        <div class="flex flex-col md:flex-row justify-between items-start gap-4 mb-4">
+          <div class="flex-1">
+            <div class="flex items-center gap-3 mb-2">
+              <div class="w-2.5 h-2.5 rounded-full ${status === 'active' ? 'bg-emerald status-dot' : (status === 'exhausted' ? 'bg-red' : 'bg-gray-500')}"></div>
+              <h3 class="font-display text-lg font-bold text-white">${k.name}</h3>
+              <span class="px-2 py-0.5 rounded-lg text-xs font-mono font-semibold ${badgeColor}">${badgeText}</span>
+            </div>
+            <p class="text-gray-500 text-sm mb-1">${k.note || ''}</p>
+            <p class="font-mono text-xs text-gray-600">${masked}</p>
+            ${spendBreakdown}
+            ${modelBreakdown}
+          </div>
+          <div class="text-right">
+            <p class="font-display text-2xl font-bold text-accent cost-display">$${k.dollars.toFixed(2)}</p>
+            <p class="text-xs text-gray-500 font-mono">Total Cost</p>
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-3 gap-4 mb-4 py-4 border-t border-gray-800">
+          <div class="text-center">
+            <p class="font-display text-xl font-bold text-white">${k.requests.toLocaleString()}</p>
+            <p class="text-xs text-gray-500 font-mono uppercase mt-1">Requests</p>
+          </div>
+          <div class="text-center">
+            <p class="font-display text-xl font-bold text-white">${k.total_tokens.toLocaleString()}</p>
+            <p class="text-xs text-gray-500 font-mono uppercase mt-1">Tokens</p>
+          </div>
+          <div class="text-center">
+            <p class="font-display text-xl font-bold text-white">${lastUsed}</p>
+            <p class="text-xs text-gray-500 font-mono uppercase mt-1">Last Used</p>
+          </div>
+        </div>
+        
+        <div class="flex flex-wrap gap-2">
+          <button onclick="toggleKey('${k.name}', ${!k.disabled})" 
+            class="px-4 py-2 rounded-lg text-xs font-semibold font-sans transition-all hover:bg-gray-800 border border-gray-700 text-gray-400 hover:text-white">
+            ${k.disabled ? 'Enable' : 'Disable'}
+          </button>
+          <button onclick="toggleExhausted('${k.name}', ${!k.exhausted})" 
+            class="px-4 py-2 rounded-lg text-xs font-semibold font-sans transition-all hover:bg-gray-800 border border-gray-700 text-gray-400 hover:text-white">
+            ${k.exhausted ? 'Reset' : 'Mark Exhausted'}
+          </button>
+          <button onclick="deleteKey('${k.name}')" 
+            class="px-4 py-2 rounded-lg text-xs font-semibold font-sans transition-all hover:bg-red-dim hover:text-red border border-gray-700 text-gray-400 hover:border-red/30">
+            Delete
+          </button>
+        </div>
+      </div>
+    `;
   }).join('');
 }
 
@@ -503,25 +509,42 @@ function renderModels(models) {
   const entries = Object.entries(models);
   if (entries.length === 0) {
     grid.innerHTML = '';
-    empty.style.display = 'block';
+    empty.classList.remove('hidden');
     return;
   }
-  empty.style.display = 'none';
+  empty.classList.add('hidden');
   grid.innerHTML = entries.map(([name, data]) => {
     const tokens = data.tokens || 0;
     const dollars = data.dollars || 0;
-    return '<div class="model-card">' +
-      '<div class="model-info">' +
-      '<div class="model-name">' + name + '</div>' +
-      '<div class="model-tokens">' + tokens.toLocaleString() + ' tokens</div>' +
-      '</div>' +
-      '<div class="model-cost">$' + dollars.toFixed(2) + '</div>' +
-      '</div>';
+    return `
+      <div class="model-card glass rounded-xl p-5">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center">
+            <span class="text-accent text-lg font-bold">🤖</span>
+          </div>
+          <div class="flex-1">
+            <h4 class="font-semibold text-white text-sm">${name}</h4>
+            <p class="text-xs text-gray-500 font-mono">${tokens.toLocaleString()} tokens</p>
+          </div>
+        </div>
+        <div class="mt-4 pt-3 border-t border-gray-800">
+          <p class="font-display text-2xl font-bold text-accent cost-display">$${dollars.toFixed(2)}</p>
+          <p class="text-xs text-gray-500 font-mono">Total Cost</p>
+        </div>
+      </div>
+    `;
   }).join('');
 }
 
 function toggleAddForm() {
-  document.getElementById('addKeyForm').classList.toggle('active');
+  const form = document.getElementById('addKeyForm');
+  if (form.classList.contains('hidden')) {
+    form.classList.remove('hidden');
+    form.classList.add('active');
+  } else {
+    form.classList.add('hidden');
+    form.classList.remove('active');
+  }
 }
 
 async function addKey() {
@@ -541,7 +564,7 @@ async function addKey() {
   });
   const data = await res.json();
   if (res.ok) {
-    showToast('Key ' + name + ' added', 'success');
+    showToast(`Key '${name}' added`, 'success');
     document.getElementById('newKeyName').value = '';
     document.getElementById('newKeyValue').value = '';
     document.getElementById('newKeyNote').value = '';
@@ -559,7 +582,7 @@ async function toggleKey(name, disabled) {
     body: JSON.stringify({ disabled })
   });
   if (res.ok) {
-    showToast('Key ' + name + ' ' + (disabled ? 'disabled' : 'enabled'), 'success');
+    showToast(`Key '${name}' ${disabled ? 'disabled' : 'enabled'}`, 'success');
     loadAll();
   } else {
     showToast('Failed to update key', 'error');
@@ -573,7 +596,7 @@ async function toggleExhausted(name, exhausted) {
     body: JSON.stringify({ exhausted })
   });
   if (res.ok) {
-    showToast('Key ' + name + ' ' + (exhausted ? 'marked exhausted' : 'reset'), 'success');
+    showToast(`Key '${name}' ${exhausted ? 'marked exhausted' : 'reset'}`, 'success');
     loadAll();
   } else {
     showToast('Failed to update key', 'error');
@@ -581,10 +604,10 @@ async function toggleExhausted(name, exhausted) {
 }
 
 async function deleteKey(name) {
-  if (!confirm('Delete key ' + name + '? This cannot be undone.')) return;
+  if (!confirm(`Delete key '${name}'? This cannot be undone.`)) return;
   const res = await fetch('/api/keys/' + encodeURIComponent(name), { method: 'DELETE' });
   if (res.ok) {
-    showToast('Key ' + name + ' deleted', 'success');
+    showToast(`Key '${name}' deleted`, 'success');
     loadAll();
   } else {
     showToast('Failed to delete key', 'error');
@@ -594,9 +617,20 @@ async function deleteKey(name) {
 function showToast(msg, type) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
-  toast.className = 'toast ' + type;
-  toast.classList.add('show');
-  setTimeout(() => toast.classList.remove('show'), 3000);
+  toast.className = 'toast fixed bottom-6 right-6 glass-strong rounded-xl px-5 py-3 text-sm font-sans z-50 opacity-0 translate-y-5';
+  if (type === 'success') {
+    toast.classList.add('border-emerald', 'text-emerald');
+  } else {
+    toast.classList.add('border-red', 'text-red');
+  }
+  requestAnimationFrame(() => {
+    toast.classList.remove('opacity-0', 'translate-y-5');
+    toast.classList.add('opacity-100', 'translate-y-0');
+  });
+  setTimeout(() => {
+    toast.classList.remove('opacity-100', 'translate-y-0');
+    toast.classList.add('opacity-0', 'translate-y-5');
+  }, 3000);
 }
 
 loadAll();
