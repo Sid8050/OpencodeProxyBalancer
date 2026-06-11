@@ -1,9 +1,5 @@
-# Binary
 /proxy
-
-# Secrets — NEVER commit
-keys.json
-
-# OS
-.DS_Store
+**/proxy
 *.log
+.DS_Store
+keys.json

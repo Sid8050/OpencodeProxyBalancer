@@ -181,11 +181,11 @@ func cleanOldHistory() {
 
 // ── Key rotation ──────────────────────────────────────────────
 
-func pickKey() string {
+func pickKey() (string, string) {
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
 	if len(cfg.Keys) == 0 {
-		return ""
+		return "", ""
 	}
 	idxMu.Lock()
 	start := keyIdx
@@ -194,7 +194,7 @@ func pickKey() string {
 		keyIdx = (keyIdx + 1) % len(cfg.Keys)
 		if !k.Exhausted && !k.Disabled {
 			idxMu.Unlock()
-			return k.Key
+			return k.Key, k.Name
 		}
 		if keyIdx == start {
 			for i := range cfg.Keys {
@@ -202,7 +202,7 @@ func pickKey() string {
 			}
 			log.Println("⚠️ All keys exhausted — resetting all")
 			idxMu.Unlock()
-			return cfg.Keys[0].Key
+			return cfg.Keys[0].Key, cfg.Keys[0].Name
 		}
 	}
 }
@@ -530,12 +530,11 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		key := pickKey()
+		key, keyName := pickKey()
 		if key == "" {
 			http.Error(w, `{"error":"no API keys configured"}`, http.StatusServiceUnavailable)
 			return
 		}
-		keyName := keyNameForKey(key)
 
 		req, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(bodyBytes))
 		if err != nil {
