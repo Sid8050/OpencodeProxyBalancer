@@ -1,0 +1,9 @@
+{
+  "keys": [
+    {
+      "name": "primary",
+      "key": "sk-your-key-here"
+    }
+  ],
+  "usage": {}
+}
