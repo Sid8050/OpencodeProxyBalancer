@@ -1,11 +1,10 @@
 set proxyDir to "/Users/sidharth/Documents/opencode-proxy/"
 set proxyBin to proxyDir & "proxy"
+set running to false
 
 try
 	do shell script "pgrep -f " & quoted form of proxyBin
 	set running to true
-on error
-	set running to false
 end try
 
 if running then
@@ -25,8 +24,6 @@ else
 		try
 			do shell script "curl -s http://localhost:8320/health"
 			display notification "Proxy started — port 8320" with title "OpenCode Proxy" sound name "Pop"
-		on error
-			display notification "Failed to start" with title "OpenCode Proxy"
 		end try
 	end if
 end if
