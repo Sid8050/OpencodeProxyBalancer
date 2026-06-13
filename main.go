@@ -243,10 +243,9 @@ func handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfgMu.RLock()
-	defer cfgMu.RUnlock()
-
 	if r.Method == "GET" {
+		cfgMu.RLock()
+		defer cfgMu.RUnlock()
 		type KeyResponse struct {
 			KeyEntry
 			Requests     int64                  `json:"requests"`
@@ -279,6 +278,9 @@ func handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == "POST" {
+		cfgMu.Lock()
+		defer cfgMu.Unlock()
+
 		var req struct {
 			Name string `json:"name"`
 			Key  string `json:"key"`
@@ -521,7 +523,12 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	targetURL := upstreamURL + r.URL.Path
+	// Strip any leading /v1/ prefix so we don't double it with upstreamURL
+	strippedPath := strings.TrimPrefix(r.URL.Path, "/v1")
+	if !strings.HasPrefix(strippedPath, "/") {
+		strippedPath = "/" + strippedPath
+	}
+	targetURL := upstreamURL + strippedPath
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
 	}
@@ -560,62 +567,19 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
 		if resp.StatusCode == 403 {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if strings.Contains(string(body), "cloudflare") {
+			if strings.Contains(string(respBody), "cloudflare") {
 				log.Printf("⚠️ Cloudflare blocked key '%s', retrying...", keyName)
 				continue
 			}
 		}
 
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		var payload struct {
-			Usage struct {
-				PromptTokens        int64 `json:"prompt_tokens"`
-				CompletionTokens    int64 `json:"completion_tokens"`
-				TotalTokens         int64 `json:"total_tokens"`
-				PromptTokensDetails struct {
-					CachedTokens int64 `json:"cached_tokens"`
-				} `json:"prompt_tokens_details"`
-			} `json:"usage"`
-		}
-		if json.Unmarshal(respBody, &payload) == nil && payload.Usage.TotalTokens > 0 {
-			cost := calcCost(modelName, payload.Usage.PromptTokens, payload.Usage.CompletionTokens,
-				payload.Usage.PromptTokensDetails.CachedTokens)
-
-			cfgMu.Lock()
-			if cfg.Usage == nil {
-				cfg.Usage = make(map[string]*KeyUsage)
-			}
-			u, ok := cfg.Usage[keyName]
-			if !ok {
-				u = &KeyUsage{Models: make(map[string]*ModelSpend)}
-				cfg.Usage[keyName] = u
-			}
-			u.Requests++
-			u.TotalTokens += payload.Usage.TotalTokens
-			u.Dollars += cost
-			u.LastUsed = time.Now()
-			if u.Models == nil {
-				u.Models = make(map[string]*ModelSpend)
-			}
-			if u.Models[modelName] == nil {
-				u.Models[modelName] = &ModelSpend{}
-			}
-			u.Models[modelName].Tokens += payload.Usage.TotalTokens
-			u.Models[modelName].Dollars += cost
-			u.History = append(u.History, SpendRecord{
-				Time:    time.Now(),
-				Model:   modelName,
-				Tokens:  payload.Usage.TotalTokens,
-				Dollars: cost,
-			})
-			cfgMu.Unlock()
-			triggerSave()
-			cleanOldHistory()
+		// Track usage — handles both JSON and SSE streaming responses
+		if readErr == nil {
+			parseAndTrack(respBody, modelName, keyName, r.URL.Path, resp.StatusCode)
 		}
 
 		for k, vs := range resp.Header {
@@ -630,6 +594,96 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("❌ All keys exhausted or failed. Last error: %v", lastErr)
 	http.Error(w, `{"error":"all API keys exhausted"}`, http.StatusServiceUnavailable)
+}
+
+// ── Usage tracking ──────────────────────────────────────────────
+
+type responseUsage struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+	PromptTokensDetails struct {
+		CachedTokens int64 `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
+func parseAndTrack(respBody []byte, modelName, keyName, reqPath string, statusCode int) {
+	bodyStr := string(respBody)
+	var usage responseUsage
+	var found bool
+
+	if strings.HasPrefix(bodyStr, "data: ") {
+		// SSE streaming response — find the last data: chunk with usage
+		lines := strings.Split(bodyStr, "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
+			line := strings.TrimSpace(lines[i])
+			if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" {
+				continue
+			}
+			jsonStr := strings.TrimPrefix(line, "data: ")
+			var chunk struct {
+				Usage responseUsage `json:"usage"`
+			}
+			if json.Unmarshal([]byte(jsonStr), &chunk) == nil && chunk.Usage.TotalTokens > 0 {
+				usage = chunk.Usage
+				found = true
+				break
+			}
+		}
+	} else {
+		// Standard JSON response
+		var payload struct {
+			Usage responseUsage `json:"usage"`
+		}
+		if json.Unmarshal(respBody, &payload) == nil && payload.Usage.TotalTokens > 0 {
+			usage = payload.Usage
+			found = true
+		}
+	}
+
+	if !found {
+		if statusCode == 200 {
+			log.Printf("⚠️ [skip-track] %s: HTTP %d, body_len=%d, model=%s, key=%s",
+				reqPath, statusCode, len(respBody), modelName, keyName)
+		}
+		return
+	}
+
+	cost := calcCost(modelName, usage.PromptTokens, usage.CompletionTokens,
+		usage.PromptTokensDetails.CachedTokens)
+
+	log.Printf("📊 [%s] %s: %d tokens → $%.6f (key: %s)", modelName, reqPath, usage.TotalTokens, cost, keyName)
+
+	cfgMu.Lock()
+	if cfg.Usage == nil {
+		cfg.Usage = make(map[string]*KeyUsage)
+	}
+	u, ok := cfg.Usage[keyName]
+	if !ok {
+		u = &KeyUsage{Models: make(map[string]*ModelSpend)}
+		cfg.Usage[keyName] = u
+	}
+	u.Requests++
+	u.TotalTokens += usage.TotalTokens
+	u.Dollars += cost
+	u.LastUsed = time.Now()
+	if u.Models == nil {
+		u.Models = make(map[string]*ModelSpend)
+	}
+	if u.Models[modelName] == nil {
+		u.Models[modelName] = &ModelSpend{}
+	}
+	u.Models[modelName].Tokens += usage.TotalTokens
+	u.Models[modelName].Dollars += cost
+	u.History = append(u.History, SpendRecord{
+		Time:    time.Now(),
+		Model:   modelName,
+		Tokens:  usage.TotalTokens,
+		Dollars: cost,
+	})
+	cfgMu.Unlock()
+	triggerSave()
+	cleanOldHistory()
 }
 
 // ── Dashboard ───────────────────────────────────────────────────

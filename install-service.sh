@@ -1,25 +1,50 @@
 #!/bin/bash
-# Installs the OpenCode Proxy as a macOS LaunchAgent
-# Runs on login and stays alive in the background
+set -e
 
+PROXY_DIR="$HOME/Documents/opencode-proxy"
 LAUNCH_DIR="$HOME/Library/LaunchAgents"
-PLIST="com.opencode.proxy.plist"
+PLIST_NAME="com.opencode.proxy.plist"
 
 mkdir -p "$LAUNCH_DIR"
 
-# Stop if already running
-launchctl unload "$LAUNCH_DIR/$PLIST" 2>/dev/null
+launchctl unload "$LAUNCH_DIR/$PLIST_NAME" 2>/dev/null || true
 
-# Copy plist
-cp "$(dirname "$0")/$PLIST" "$LAUNCH_DIR/$PLIST"
+cat > "$LAUNCH_DIR/$PLIST_NAME" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.opencode.proxy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$PROXY_DIR/proxy</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$PROXY_DIR</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$PROXY_DIR/proxy.log</string>
+    <key>StandardErrorPath</key>
+    <string>$PROXY_DIR/proxy.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
+PLIST
 
-# Load it
-launchctl load "$LAUNCH_DIR/$PLIST"
+launchctl load "$LAUNCH_DIR/$PLIST_NAME" 2>/dev/null || true
 
 echo "✓ Proxy installed as background service"
 echo "  Starts automatically on login"
-echo "  Logs: $(dirname "$0")/proxy.log"
+echo "  Logs: $PROXY_DIR/proxy.log"
 echo "  Dashboard: http://localhost:8320/dashboard"
 echo ""
-echo "To stop:  launchctl unload ~/Library/LaunchAgents/$PLIST"
-echo "To start: launchctl load ~/Library/LaunchAgents/$PLIST"
+echo "To stop:  launchctl unload $LAUNCH_DIR/$PLIST_NAME"
+echo "To start: launchctl load $LAUNCH_DIR/$PLIST_NAME"
+echo ""
+echo "⚠️  macOS Gatekeeper may block unsigned binaries."
+echo "    If the service fails: codesign -s - -f $PROXY_DIR/proxy"

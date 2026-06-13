@@ -1,9 +1,12 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 if [ ! -f keys.json ]; then
-  echo "❌ keys.json not found. Copy keys.json.template and add your API keys."
+  echo "❌ keys.json not found. Create it with your API keys:"
+  echo '  echo '"'"'{"keys":[{"name":"my-key","key":"sk-..."}],"usage":{}}'"'"' > keys.json'
   exit 1
 fi
-mkdir -p bin
-go build -o bin/proxy-server main.go && echo "✓ Built"
-bin/proxy-server
+echo "→ Building..."
+go build -o proxy . && echo "✓ Built"
+echo "→ Starting on http://localhost:8320"
+echo "  Dashboard: http://localhost:8320/dashboard"
+./proxy
